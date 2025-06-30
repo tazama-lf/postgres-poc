@@ -1,7 +1,9 @@
 create table pacs002 (
     id uuid primary key,
     document jsonb not null,
-    createdAt timestamptz default now(),
+    creDtTm timestamptz generated always as (
+        (document->'FIToFIPmtSts'->'GrpHdr'->>'CreDtTm')::timestamptz
+    ) stored,
     
     messageId text generated always as (
         document->'FIToFIPmtSts'->'GrpHdr'->>'MsgId'
@@ -14,6 +16,7 @@ create table pacs002 (
     constraint unique_msgid_e2eid_pacs002 unique (messageId, endToEndId),
 
     constraint message_id_not_null check (messageId is not null),
+    constraint cre_dt_tm check (creDtTm is not null),
     constraint end_to_end_id_not_null check (endToEndId is not null)
 );
 
@@ -23,7 +26,9 @@ create index idx_pacs002_end_to_end_id on pacs002 (endToEndId);
 create table pacs008 (
     id uuid primary key,
     document jsonb not null,
-    createdAt timestamptz default now(),
+    creDtTm timestamptz generated always as (
+        (document->'FIToFICstmrCdtTrf'->'GrpHdr'->>'CreDtTm')::timestamptz
+    ) stored,
 
     messageId text generated always as (
         document->'FIToFICstmrCdtTrf'->'GrpHdr'->>'MsgId'
@@ -35,6 +40,7 @@ create table pacs008 (
 
     constraint unique_msgid_e2eid_pacs008 unique (messageId, endToEndId),
     constraint message_id_not_null check (messageId is not null),
+    constraint cre_dt_tm check (creDtTm is not null),
     constraint end_to_end_id_not_null check (endToEndId is not null)
 );
 
