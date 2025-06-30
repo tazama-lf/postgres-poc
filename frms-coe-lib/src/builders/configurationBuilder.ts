@@ -1,57 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { aql, Database } from 'arangojs';
-import { type AqlQuery } from 'arangojs/aql';
-import * as fs from 'fs';
 import NodeCache from 'node-cache';
-import { formatError } from '../helpers/formatter';
-import { isDatabaseReady } from '../helpers/readyCheck';
 import { type Typology } from '../interfaces';
 import { dbConfiguration } from '../interfaces/ArangoCollections';
 import { type LocalCacheConfig, readyChecks, type DatabaseManagerType, type DBConfig } from '../services/dbManager';
+import { Pool } from 'pg';
 
 export async function configurationBuilder(
   manager: DatabaseManagerType,
   configurationConfig: DBConfig,
   cacheConfig?: LocalCacheConfig,
 ): Promise<void> {
-  manager._configuration = new Database({
-    url: configurationConfig.url,
-    databaseName: configurationConfig.databaseName,
-    auth: {
-      username: configurationConfig.user,
-      password: configurationConfig.password,
-    },
-    agentOptions: {
-      ca: fs.existsSync(configurationConfig.certPath) ? [fs.readFileSync(configurationConfig.certPath)] : [],
-    },
+  manager._configuration = new Pool({
+    host: configurationConfig.url,
+    database: configurationConfig.databaseName,
+    user: configurationConfig.user,
+    password: configurationConfig.password,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+    maxLifetimeSeconds: 60,
   });
-
-  try {
-    const dbReady = await isDatabaseReady(manager._configuration);
-    readyChecks.ConfigurationDB = dbReady ? 'Ok' : 'err';
-  } catch (error) {
-    const err = error as Error;
-    readyChecks.ConfigurationDB = `err, ${formatError(err)}`;
-  }
 
   manager.setupConfig = configurationConfig;
   manager.nodeCache = cacheConfig?.localCacheEnabled ? new NodeCache() : undefined;
-
-  manager.queryConfigurationDB = async (collection: string, filter: string, limit?: number) => {
-    const db = manager._configuration?.collection(collection);
-    const aqlFilter = aql`${filter}`;
-    const aqlLimit = limit ? aql`LIMIT ${limit}` : undefined;
-
-    const query: AqlQuery = aql`
-      FOR doc IN ${db}
-      FILTER ${aqlFilter}
-      ${aqlLimit}
-      RETURN doc
-    `;
-
-    return await (await manager._configuration?.query(query))?.batches.all();
-  };
 
   manager.getRuleConfig = async (ruleId: string, cfg: string, limit?: number) => {
     const cacheKey = `${ruleId}_${cfg}`;
@@ -59,40 +31,23 @@ export async function configurationBuilder(
       const cacheVal = manager.nodeCache?.get(cacheKey);
       if (cacheVal) return await Promise.resolve(cacheVal);
     }
-    const aqlLimit = limit ? aql`LIMIT ${limit}` : undefined;
-    const db = manager._configuration?.collection(dbConfiguration.ruleConfiguration);
-    const query: AqlQuery = aql`
-      FOR doc IN ${db}
-      FILTER doc.id == ${ruleId}
-      FILTER doc.cfg == ${cfg}
-      ${aqlLimit}
-      RETURN doc
-    `;
+    const db = manager._configuration;
 
-    const toReturn = await (await manager._configuration?.query(query))?.batches.all();
-    if (cacheConfig?.localCacheEnabled && toReturn && toReturn[0] && toReturn[0].length === 1) {
-      manager.nodeCache?.set(cacheKey, toReturn, cacheConfig?.localCacheTTL ?? 3000);
-    }
-    return toReturn;
-  };
+    const toReturn = await db?.query(
+      `
+      select
+        document
+      from
+        rule
+      where
+          ruleId = $1
+        and
+          ruleCfg = $2
+      ${limit ? 'limit $3' : ''}`,
+      [ruleId, cfg, limit],
+    );
 
-  manager.getTransactionConfig = async (transctionId: string, cfg: string) => {
-    const cacheKey = `${transctionId}_${cfg}`;
-    if (cacheConfig?.localCacheEnabled ?? false) {
-      const cacheVal = manager.nodeCache?.get(cacheKey);
-      if (cacheVal) return await Promise.resolve(cacheVal);
-    }
-
-    const db = manager._configuration?.collection(dbConfiguration.transactionConfiguration);
-    const query: AqlQuery = aql`
-      FOR doc IN ${db}
-      FILTER doc.id == ${transctionId}
-      FILTER doc.cfg == ${cfg}
-      RETURN doc
-    `;
-
-    const toReturn = await (await manager._configuration?.query(query))?.batches.all();
-    if (cacheConfig?.localCacheEnabled && toReturn && toReturn[0] && toReturn[0].length === 1) {
+    if (cacheConfig?.localCacheEnabled && toReturn && toReturn.rows && toReturn.rows.length === 1) {
       manager.nodeCache?.set(cacheKey, toReturn, cacheConfig?.localCacheTTL ?? 3000);
     }
     return toReturn;
@@ -104,27 +59,41 @@ export async function configurationBuilder(
       const cacheVal = manager.nodeCache?.get(cacheKey);
       if (cacheVal) return await Promise.resolve(cacheVal);
     }
-    const db = manager._configuration?.collection(dbConfiguration.typologyConfiguration);
-    const query: AqlQuery = aql`
-      FOR doc IN ${db}
-      FILTER doc.id == ${typology.id} AND doc.cfg == ${typology.cfg}
-      RETURN doc
-    `;
+    const db = manager._configuration;
 
-    const toReturn = await (await manager._configuration?.query(query))?.batches.all();
-    if (cacheConfig?.localCacheEnabled && toReturn && toReturn[0] && toReturn[0].length === 1) {
+    const toReturn = await db?.query(
+      `
+      select
+        document
+      from
+        typology
+      where
+          typologyId = $1
+        and
+          typologyCfg = $2
+      `,
+      [typology.id, typology.cfg],
+    );
+
+    if (cacheConfig?.localCacheEnabled && toReturn && toReturn.rows && toReturn.rows.length === 1) {
       manager.nodeCache?.set(cacheKey, toReturn, cacheConfig?.localCacheTTL ?? 3000);
     }
     return toReturn;
   };
 
   manager.getNetworkMap = async () => {
-    const db = manager._configuration?.collection(dbConfiguration.networkConfiguration);
-    const networkConfigurationQuery: AqlQuery = aql`
-        FOR doc IN ${db}
-        FILTER doc.active == true
-        RETURN doc
-      `;
-    return await (await manager._configuration?.query(networkConfigurationQuery))?.batches.all();
+    const db = manager._configuration;
+    const toReturn = await db?.query(
+      `
+      select
+        document
+      from
+        network_map
+      where
+          active = $1
+      `,
+      [true],
+    );
+    return toReturn?.rows;
   };
 }
