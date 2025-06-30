@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { type Database } from 'arangojs';
 import { type AccountCondition, type ConditionEdge, type EntityCondition, type TransactionRelationship } from '..';
 import { type RawConditionResponse } from '../event-flow/EntityConditionEdge';
+import { Pool } from 'pg';
 
 export interface PseudonymsDB {
-  _pseudonymsDb: Database;
+  _pseudonymsDb: Pool;
 
   /**
    * @param collection Collection name against which this query will be run

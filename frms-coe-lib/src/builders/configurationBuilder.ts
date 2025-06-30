@@ -2,7 +2,6 @@
 
 import NodeCache from 'node-cache';
 import { type Typology } from '../interfaces';
-import { dbConfiguration } from '../interfaces/ArangoCollections';
 import { type LocalCacheConfig, readyChecks, type DatabaseManagerType, type DBConfig } from '../services/dbManager';
 import { Pool } from 'pg';
 
@@ -36,7 +35,7 @@ export async function configurationBuilder(
     const toReturn = await db?.query(
       `
       select
-        document
+        configuration
       from
         rule
       where
@@ -64,7 +63,7 @@ export async function configurationBuilder(
     const toReturn = await db?.query(
       `
       select
-        document
+        configuration
       from
         typology
       where
@@ -86,11 +85,11 @@ export async function configurationBuilder(
     const toReturn = await db?.query(
       `
       select
-        document
+        configuration
       from
         network_map
       where
-          active = $1
+          configuration->'active' = $1
       `,
       [true],
     );

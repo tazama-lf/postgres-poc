@@ -1,63 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { aql, Database } from 'arangojs';
-import { join, type AqlQuery, type GeneratedAqlQuery } from 'arangojs/aql';
-import * as fs from 'fs';
 import { v4 } from 'uuid';
-import { formatError } from '../helpers/formatter';
-import { isDatabaseReady } from '../helpers/readyCheck';
 import { type AccountCondition, type ConditionEdge, type EntityCondition, type TransactionRelationship } from '../interfaces';
 import { dbPseudonyms } from '../interfaces/ArangoCollections';
 import { type RawConditionResponse } from '../interfaces/event-flow/EntityConditionEdge';
-import { readyChecks, type DatabaseManagerType, type DBConfig } from '../services/dbManager';
+import { type DatabaseManagerType, type DBConfig } from '../services/dbManager';
+import { Pool } from 'pg';
 
 export async function pseudonymsBuilder(manager: DatabaseManagerType, pseudonymsConfig: DBConfig): Promise<void> {
-  manager._pseudonymsDb = new Database({
-    url: pseudonymsConfig.url,
-    databaseName: pseudonymsConfig.databaseName,
-    auth: { username: pseudonymsConfig.user, password: pseudonymsConfig.password },
-    agentOptions: { ca: fs.existsSync(pseudonymsConfig.certPath) ? [fs.readFileSync(pseudonymsConfig.certPath)] : [] },
+  manager._pseudonymsDb = new Pool({
+    host: pseudonymsConfig.url,
+    database: pseudonymsConfig.databaseName,
+    user: pseudonymsConfig.user,
+    password: pseudonymsConfig.password,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+    maxLifetimeSeconds: 60,
   });
 
-  try {
-    const dbReady = await isDatabaseReady(manager._pseudonymsDb);
-    readyChecks.PseudonymsDB = dbReady ? 'Ok' : 'err';
-  } catch (error) {
-    const err = error as Error;
-    readyChecks.PseudonymsDB = `err, ${formatError(err)}`;
-  }
-
-  manager.queryPseudonymDB = async (collection: string, filter: string, limit?: number) => {
-    const db = manager._pseudonymsDb?.collection(collection);
-    const aqlFilter = aql`${filter}`;
-    const aqlLimit = limit ? aql`LIMIT ${limit}` : undefined;
-
-    const query: AqlQuery = aql`
-      FOR doc IN ${db}
-      FILTER ${aqlFilter}
-      ${aqlLimit}
-      RETURN doc
-    `;
-
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
-  };
-
   manager.getPseudonyms = async (hash: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.self);
+    const db = manager._pseudonymsDb;
 
-    const query: AqlQuery = aql`
-      FOR i IN ${db}
-      FILTER i.pseudonym == ${hash}
-      RETURN i
-    `;
+    const results = await db?.query('select document from pseudonym where pseudonym = $1', [hash]);
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
-  };
-
-  manager.addAccount = async (hash: string) => {
-    const data = { _key: hash };
-
-    return await manager._pseudonymsDb?.collection(dbPseudonyms.accounts).save(data, { overwriteMode: 'ignore' });
+    return results?.rows;
   };
 
   manager.saveTransactionRelationship = async (tR: TransactionRelationship) => {

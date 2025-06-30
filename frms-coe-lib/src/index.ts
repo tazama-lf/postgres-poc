@@ -1,7 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-
-import { aql } from 'arangojs';
-import { type GeneratedAqlQuery } from 'arangojs/aql';
 import { CreateDatabaseManager, type TransactionDB, type DatabaseManagerInstance, type ManagerConfig } from './services/dbManager';
 import { type ConfigurationDB } from './interfaces/database/ConfigurationDB';
 import { type TransactionHistoryDB } from './interfaces/database/TransactionHistoryDB';
@@ -13,10 +10,8 @@ export {
   CreateDatabaseManager,
   LoggerService,
   RedisService,
-  aql,
   type ConfigurationDB,
   type DatabaseManagerInstance,
-  type GeneratedAqlQuery,
   type ManagerConfig,
   type PseudonymsDB,
   type TransactionHistoryDB,

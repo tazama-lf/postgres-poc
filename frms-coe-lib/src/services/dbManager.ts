@@ -94,10 +94,10 @@ export async function CreateDatabaseManager<T extends ManagerConfig>(config: T):
 
   manager.quit = () => {
     redis?.quit();
-    manager._pseudonymsDb?.close();
-    manager._transactionHistory?.close();
-    manager._configuration?.close();
-    manager._transaction?.close();
+    manager._pseudonymsDb?.end();
+    manager._transactionHistory?.end();
+    manager._configuration?.end();
+    manager._transaction?.end();
   };
 
   if (Object.values(readyChecks).some((status) => status !== 'Ok')) {
