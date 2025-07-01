@@ -28,24 +28,29 @@ export async function configurationBuilder(
     }
     const db = manager._configuration;
 
-    const toReturn = await db?.query(
-      `
-      select
+    let query = `
+      SELECT
         configuration
-      from
+      FROM
         rule
-      where
-          ruleId = $1
-        and
-          ruleCfg = $2
-      ${limit ? 'limit $3' : ''}`,
-      [ruleId, cfg, limit],
-    );
+      WHERE
+        ruleId = $1 AND ruleCfg = $2
+    `;
 
-    if (cacheConfig?.localCacheEnabled && toReturn && toReturn.rows && toReturn.rows.length === 1) {
-      manager.nodeCache?.set(cacheKey, toReturn, cacheConfig?.localCacheTTL ?? 3000);
+    const params: Array<string | number> = [ruleId, cfg];
+
+    if (limit !== undefined) {
+      query = `${query} LIMIT $3`;
+      params.push(limit);
     }
-    return toReturn?.rows[0].configuration;
+
+    const toReturn = await db?.query(query, params);
+
+    const result = toReturn?.rows[0].configuration;
+    if (cacheConfig?.localCacheEnabled && toReturn && toReturn.rows && toReturn.rows.length === 1) {
+      manager.nodeCache?.set(cacheKey, result, cacheConfig?.localCacheTTL ?? 3000);
+    }
+    return result;
   };
 
   manager.getTypologyConfig = async (typology: Typology) => {
@@ -70,10 +75,11 @@ export async function configurationBuilder(
       [typology.id, typology.cfg],
     );
 
+    const result = toReturn?.rows[0].configuration;
     if (cacheConfig?.localCacheEnabled && toReturn && toReturn.rows && toReturn.rows.length === 1) {
-      manager.nodeCache?.set(cacheKey, toReturn, cacheConfig?.localCacheTTL ?? 3000);
+      manager.nodeCache?.set(cacheKey, result, cacheConfig?.localCacheTTL ?? 3000);
     }
-    return toReturn?.rows[0].configuration;
+    return result;
   };
 
   manager.getNetworkMap = async () => {
