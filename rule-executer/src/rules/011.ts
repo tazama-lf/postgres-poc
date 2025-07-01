@@ -10,12 +10,6 @@ import {
   type RuleRequest,
   type RuleResult,
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
-import { pseudonymsdb } from '../client/ignite';
-// @ts-ignore
-
-import IgniteClient from 'apache-ignite-client';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
 
 export interface QueryResult {
   CreDtTm: string;
@@ -80,23 +74,19 @@ export async function handleRule011(
   }
 
   const endToEndId = req.transaction.FIToFIPmtSts.TxInfAndSts.OrgnlEndToEndId;
-  const creditorAccount = `accounts/${req.DataCache.cdtrAcctId!}`;
+  const creditorAccount = req.DataCache.cdtrAcctId;
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
 
-  const queryString = new SqlFieldsQuery(
-    'SELECT TR_END_TO_END_ID, TR_CRE_DT_TM FROM pseudonymsschema.transactionrelationship WHERE TR_FROM = ? AND TR_TXTP = ? AND TR_TXSTS = ? AND TR_CRE_DT_TM <= ? ORDER BY TR_CRE_DT_TM DESC;',
-  ).setArgs(
-    creditorAccount,
-    'pacs.002.001.12',
-    'ACCC',
-    currentPacs002TimeFrame,
+  const results = await databaseManager._pseudonymsDb.query(
+    'SELECT endToEndId, creDtTm FROM transaction_relationship WHERE source = $1 AND txtp = $2 AND txsts = $3 AND credttm::timestamptz <= $4::timestamptz ORDER BY credttm::timestamptz desc;',
+    [creditorAccount, 'pacs.002.001.12', 'ACCC', currentPacs002TimeFrame],
   );
+  const timestamps = results.rows as Array<{
+    endToEndId: string;
+    creDtTm: string;
+  }>;
 
-  const cursor = await pseudonymsdb.query(queryString);
-
-  const timestamps = (await cursor.getAll()) as Array<[string, string]>;
-
-  const e2eIndex = timestamps.findIndex((i) => i[0] === endToEndId);
+  const e2eIndex = timestamps.findIndex((i) => i.endToEndId === endToEndId);
 
   if (
     typeof e2eIndex !== 'number' ||
@@ -116,8 +106,8 @@ export async function handleRule011(
   }
 
   const queryResult: QueryResult = {
-    CreDtTm: timestamps[0][1],
-    EndToEndId: timestamps[0][1],
+    CreDtTm: timestamps[0].creDtTm,
+    EndToEndId: timestamps[0].endToEndId,
   };
 
   /* eslint-disable-next-line @typescript-eslint/no-unsafe-argument */
