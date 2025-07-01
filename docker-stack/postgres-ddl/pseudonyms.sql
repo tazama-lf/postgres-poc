@@ -24,19 +24,20 @@ create table transaction_relationship (
     ) stored,
 
     amt numeric(18,2) generated always as (
-        transaction_relationship->>'Amt'
+        (transaction_relationship->>'Amt')::numeric(18,2)
     ) stored,
 
-    ccy varchar(3) generated always as (
+    ccy varchar generated always as (
         transaction_relationship->>'Ccy'
     ) stored,
 
-    msgId varchar(3) generated always as (
+    msgId varchar generated always as (
         transaction_relationship->>'MsgId'
     ) stored,
 
-    creDtTm timestamptz generated always as (
-        (transaction_relationship->>'CreDtTm')::timestamptz
+    -- cast to timestamptz when querying
+    creDtTm text generated always as (
+        transaction_relationship->>'CreDtTm'
     ) stored,
 
     txTp varchar generated always as (
