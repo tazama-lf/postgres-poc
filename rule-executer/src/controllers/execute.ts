@@ -13,7 +13,7 @@ import { handleRule003 } from '../rules/003';
 import { handleRule008 } from '../rules/008';
 import { handleRule010 } from '../rules/010';
 import { handleRule011 } from '../rules/011';
-// import { handleRule016 } from '../rules/016';
+import { handleRule016 } from '../rules/016';
 // import { handleRule021 } from '../rules/021';
 // import { handleRule024 } from '../rules/024';
 // import { handleRule030 } from '../rules/030';
@@ -171,16 +171,16 @@ export const execute = async (reqObj: unknown): Promise<void> => {
           databaseManager,
         );
         break;
-      // case '016':
-      //   ruleRes = await handleRule016(
-      //     request,
-      //     determineOutcome,
-      //     ruleRes,
-      //     loggerService,
-      //     ruleConfig,
-      //     databaseManager,
-      //   );
-      //   break;
+      case '016':
+        ruleRes = await handleRule016(
+          request,
+          determineOutcome,
+          ruleRes,
+          loggerService,
+          ruleConfig,
+          databaseManager,
+        );
+        break;
       // case '021':
       //   ruleRes = await handleRule021(
       //     request,

@@ -10,12 +10,6 @@ import {
   type RuleRequest,
   type RuleResult,
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
-import { unwrap } from '@tazama-lf/frms-coe-lib/lib/helpers/unwrap';
-import { pseudonymsdb } from '../client/ignite';
-// @ts-ignore
-import IgniteClient from 'apache-ignite-client';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
 
 export async function handleRule016(
   req: RuleRequest,
@@ -43,29 +37,29 @@ export async function handleRule016(
   if (!req.DataCache || req.DataCache.cdtrAcctId == null) {
     throw new Error('Data Cache does not have required cdtrAcctId');
   }
-  const creditorAccountId = `accounts/${req.DataCache.cdtrAcctId}`;
+  const creditorAccountId = req.DataCache.cdtrAcctId;
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
 
   const maxQueryRange: number = ruleConfig.config.parameters
     .maxQueryRange as number;
 
-  const queryString = new SqlFieldsQuery(`
-    select count (*) from pseudonymsschema.transactionrelationship
-      where TR_FROM = ? 
-        and TR_TXTP = ?
-        and TR_TXSTS = ?
-        AND TIMESTAMPDIFF(SECOND, TR_CRE_DT_TM, ?) <= ?;`).setArgs(
-    creditorAccountId,
-    'pacs.002.001.12',
-    'ACCC',
-    currentPacs002TimeFrame,
-    maxQueryRange,
+  const result = await databaseManager._pseudonymsDb.query(
+    `
+    select count (*) from transaction_relationship
+      where source = $1 
+        and txtp = $2
+        and txsts = $3
+        and (EXTRACT(EPOCH FROM $4::timestamptz - credttm::timestamptz) * 1000) <= $5;`,
+    [
+      creditorAccountId,
+      'pacs.002.001.12',
+      'ACCC',
+      currentPacs002TimeFrame,
+      maxQueryRange,
+    ],
   );
 
-  const cursor = await pseudonymsdb.query(queryString);
-  const results = (await cursor.getAll()) as Array<[number]>;
-
-  const count = unwrap(results);
+  const count = Number(result.rows[0].count);
 
   if (count == null) {
     // 0 is a legal value
