@@ -12,11 +12,6 @@ import {
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
 // @ts-ignore
 
-import IgniteClient from 'apache-ignite-client';
-import { pseudonymsdb } from '../client/ignite';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
-
 export interface QueryResult {
   CreDtTm: string;
   EndToEndId: string;
@@ -82,24 +77,21 @@ export async function handleRule010(
   }
 
   const endToEndId = req.transaction.FIToFIPmtSts.TxInfAndSts.OrgnlEndToEndId;
-  const debtorAccountId = `accounts/${req.DataCache.dbtrAcctId}`;
+  const debtorAccountId = req.DataCache.dbtrAcctId;
 
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
 
-  const queryString = new SqlFieldsQuery(
-    'SELECT TR_END_TO_END_ID, TR_CRE_DT_TM FROM pseudonymsschema.transactionrelationship WHERE TR_TO = ? AND TR_TXTP = ? AND TR_TXSTS = ? AND TR_CRE_DT_TM <= ? ORDER BY TR_CRE_DT_TM DESC;',
-  ).setArgs(
-    debtorAccountId,
-    'pacs.002.001.12',
-    'ACCC',
-    currentPacs002TimeFrame,
+  const results = await databaseManager._pseudonymsDb.query(
+    'SELECT endToEndId, creDtTm FROM transaction_relationship WHERE source = $1 AND txtp = $2 AND txsts = $3 AND credttm::timestamptz <= $4::timestamptz ORDER BY credttm::timestamptz DESC;',
+    [debtorAccountId, 'pacs.002.001.12', 'ACCC', currentPacs002TimeFrame],
   );
 
-  const cursor = await pseudonymsdb.query(queryString);
+  const timestamps = results.rows as Array<{
+    endToEndId: string;
+    creDtTm: string;
+  }>;
 
-  const timestamps = (await cursor.getAll()) as Array<[string, string]>;
-
-  const e2eIndex = timestamps.findIndex((i) => i[0] === endToEndId);
+  const e2eIndex = timestamps.findIndex((i) => i.endToEndId === endToEndId);
 
   if (
     typeof e2eIndex !== 'number' ||
@@ -114,14 +106,13 @@ export async function handleRule010(
     return {
       ...ruleRes,
       subRuleRef: InsufficientHistory.subRuleRef,
-
       reason: InsufficientHistory.reason,
     };
   }
 
   const queryResult: QueryResult = {
-    CreDtTm: timestamps[0][1],
-    EndToEndId: timestamps[0][1],
+    CreDtTm: timestamps[0].creDtTm,
+    EndToEndId: timestamps[0].endToEndId,
   };
 
   /* eslint-disable-next-line @typescript-eslint/no-unsafe-argument */
