@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { type Database } from 'arangojs';
 import type { DataCache, NetworkMap } from '..';
+import { Pool } from 'pg';
 
 export interface TransactionDB {
-  _transaction: Database;
+  _transaction: Pool;
 
   /**
    * @param collection: Collection name against which this query will be run
