@@ -1,10 +1,10 @@
 create table network_map (
-    id uuid primary key,
+    id serial primary key,
     configuration jsonb not null
 );
 
 create table typology (
-    uuid uuid primary key,
+    id serial primary key,
     configuration jsonb not null,
     typologyId text generated always as (
         configuration->>'typologyId'
@@ -16,7 +16,7 @@ create table typology (
 );
 
 create table rule (
-    uuid uuid primary key,
+    id serial primary key,
     configuration jsonb not null,
     ruleId text generated always as (
         configuration->>'id'
