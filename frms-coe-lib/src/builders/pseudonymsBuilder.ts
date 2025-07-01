@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { v4 } from 'uuid';
-import { type AccountCondition, type ConditionEdge, type EntityCondition, type TransactionRelationship } from '../interfaces';
-import { dbPseudonyms } from '../interfaces/ArangoCollections';
-import { type RawConditionResponse } from '../interfaces/event-flow/EntityConditionEdge';
+import { type TransactionRelationship } from '../interfaces';
 import { type DatabaseManagerType, type DBConfig } from '../services/dbManager';
 import { Pool } from 'pg';
 
@@ -24,548 +21,321 @@ export async function pseudonymsBuilder(manager: DatabaseManagerType, pseudonyms
 
     const results = await db?.query('select document from pseudonym where pseudonym = $1', [hash]);
 
-    return results?.rows;
+    return results?.rows.map((value) => value.document);
   };
 
-  manager.saveTransactionRelationship = async (tR: TransactionRelationship) => {
-    const data = {
-      _key: tR.MsgId,
-      _from: tR.from,
-      _to: tR.to,
-      TxTp: tR.TxTp,
-      TxSts: tR.TxSts,
-      CreDtTm: tR.CreDtTm,
-      Amt: tR.Amt,
-      Ccy: tR.Ccy,
-      PmtInfId: tR.PmtInfId,
-      EndToEndId: tR.EndToEndId,
-      lat: tR.lat,
-      long: tR.long,
-    };
-    return await manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship).save(data, { overwriteMode: 'ignore' });
+  manager.saveTransactionRelationship = async (tr: TransactionRelationship) => {
+    const db = manager._pseudonymsDb;
+
+    await db?.query(
+      `
+        insert into transaction_relationship
+          (
+            source,
+            destination,
+            transaction_relationship
+        ) values
+        (
+          $1, $2, $3
+        )`,
+      [tr.from, tr.to, tr],
+    );
   };
 
   manager.getPacs008Edge = async (endToEndIds: string[]) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
+    const db = manager._pseudonymsDb;
 
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc.EndToEndId IN ${endToEndIds} && doc.TxTp == 'pacs.008.001.10'
-      RETURN doc
+    if (!Array.isArray(endToEndIds) || endToEndIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = endToEndIds.map((_, idx) => `$${idx + 1}`).join(', ');
+    const values = [...endToEndIds, 'pacs.008.001.10'];
+
+    const query = `
+      select transaction_relationship from
+        transaction_relationship
+      where
+        end_to_end_id IN (${placeholders})
+      and
+        tx_tp = $${values.length}
     `;
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    const res = await db?.query(query, values);
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.getPacs008Edges = async (accountId: string, threshold?: string, amount?: number) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
-    const account = `accounts/${accountId}`;
-    const filters: GeneratedAqlQuery[] = [aql`FILTER doc.TxTp == 'pacs.008.001.10' && doc._to == ${account}`];
+    const db = manager._pseudonymsDb;
 
-    if (threshold !== undefined) filters.push(aql`FILTER doc.CreDtTm < ${threshold}`);
-    if (amount !== undefined) filters.push(aql`FILTER doc.Amt == ${amount}`);
-
-    const query = aql`
-      FOR doc IN ${db}
-      ${join(filters)}
-      RETURN doc
+    const values = [];
+    let query = `
+      select transaction_relationship from
+        transaction_relationship
+      where
+        txTp = 'pacs.008.001.10'
+      and
+        destination = $1
     `;
+    values.push(accountId);
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    if (threshold) {
+      values.push(threshold);
+      query = `${query} and creDtTm < $${values.length}`;
+    }
+
+    if (amount !== undefined) {
+      values.push(amount);
+      query = `${query} and amt = $${values.length}`;
+    }
+
+    const res = await db?.query(query, values);
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.getPacs002Edge = async (endToEndIds: string[]) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
+    const db = manager._pseudonymsDb;
 
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc.EndToEndId IN ${endToEndIds} && doc.TxTp == 'pacs.002.001.12'
-      RETURN doc
-    `;
+    if (!Array.isArray(endToEndIds) || endToEndIds.length === 0) {
+      return [];
+    }
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    // Check if building placeholders dynamically works or maybe better impl
+    // : $1, $2, ..., $n
+    const placeholders = endToEndIds.map((_, idx) => `$${idx + 1}`).join(', ');
+    const txTpValue = 'pacs.002.001.12';
+    const values = [...endToEndIds, txTpValue];
+
+    const query = `
+    select transaction_relationship from
+      transaction_relationship
+    where
+      endToEndId IN (${placeholders})
+    and
+      txTp = $${values.length}
+  `;
+
+    const res = await db?.query(query, values);
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.getDebtorPacs002Edges = async (debtorId: string): Promise<unknown> => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
+    const db = manager._pseudonymsDb;
     const debtorAccount = `accounts/${debtorId}`;
-    const debtorAccountAql = aql`${debtorAccount}`;
-
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc._from == ${debtorAccountAql}
-      FILTER doc.TxTp == 'pacs.002.001.12' && doc.TxSts == 'ACCC'
-      RETURN doc
+    const query = `
+      select
+        transaction_relationship
+      from
+        transaction_relationship
+      where
+        source = $1
+      and
+        txTp = 'pacs.002.001.12'
+      and
+        txSts = 'ACCC'
     `;
+    const values = [debtorAccount];
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    const res = await db?.query(query, values);
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.getIncomingPacs002Edges = async (accountId: string, limit?: number): Promise<unknown> => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
-    const account = `accounts/${accountId}`;
-    const accountAql = aql`${account}`;
-
-    const aqlLimit = limit ? aql`LIMIT ${limit}` : undefined;
-
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc._to == ${accountAql}
-      FILTER doc.TxTp == 'pacs.002.001.12' && doc.TxSts == 'ACCC'
-      ${aqlLimit}
-      RETURN doc
+    const db = manager._pseudonymsDb;
+    const values: Array<string | number> = [accountId, 'pacs.002.001.12', 'ACCC'];
+    let query = `
+      select
+        transaction_relationship
+      from
+        transaction_relationship
+      where
+        destination = $1
+      and
+        txTp = $2
+      and
+        txSts = $3
     `;
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    if (limit !== undefined) {
+      values.push(limit);
+      query += ` LIMIT $${values.length}`;
+    }
+
+    const res = await db?.query(query, values);
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.getOutgoingPacs002Edges = async (accountId: string, limit?: number): Promise<unknown> => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
-    const account = `accounts/${accountId}`;
-    const accountAql = aql`${account}`;
+    const db = manager._pseudonymsDb;
 
-    const aqlLimit = limit ? aql`LIMIT ${limit}` : undefined;
-
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc._from == ${accountAql}
-      FILTER doc.TxTp == 'pacs.002.001.12' && doc.TxSts == 'ACCC'
-      ${aqlLimit}
-      RETURN doc
+    const values: Array<string | number> = [accountId, 'pacs.002.001.12', 'ACCC'];
+    let query = `
+      select
+        transaction_relationship
+      from
+        transaction_relationship
+      where
+        source = $1
+      and
+        txTp = $2
+      and
+        txSts = $3
     `;
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    if (limit !== undefined) {
+      values.push(limit);
+      query = `${query} limit $${values.length}`;
+    }
+
+    const res = await db?.query(query, values);
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.getSuccessfulPacs002Edges = async (creditorId: string[], debtorId: string, endToEndId: string[]): Promise<unknown> => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
-    const debtorAccount = `accounts/${debtorId}`;
-    const debtorAccountAql = aql`${debtorAccount}`;
+    const db = manager._pseudonymsDb;
 
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc._to IN ${creditorId}
-      FILTER doc._from == ${debtorAccountAql}
-      FILTER doc.TxTp == 'pacs.002.001.12'
-      FILTER doc.EndToEndId IN ${endToEndId}
-      FILTER doc.TxSts == 'ACCC'
-      SORT   doc.CreDtTm DESC
-      LIMIT 2
-      RETURN doc
+    let paramIndex = 2;
+
+    const creditorPlaceholders = creditorId.map(() => `$${paramIndex++}`);
+    const endToEndPlaceholders = endToEndId.map(() => `$${paramIndex++}`);
+
+    const query = `
+      select
+        transaction_relationship
+      from
+        transaction_relationship
+      where
+        source = $1
+      and
+        destination IN (${creditorPlaceholders.join(', ')})
+      and
+        txTp = 'pacs.002.001.12'
+      and
+        endToEndId IN (${endToEndPlaceholders.join(', ')})
+      and
+        txSts = 'ACCC'
+      order by creDtTm desc
+      limit 2
     `;
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
-  };
+    const res = await db?.query(query, [debtorId, ...creditorId, ...endToEndId]);
 
-  manager.getDebtorPacs008Edges = async (debtorId: string, endToEndId = '') => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
-    const debtorAccount = `accounts/${debtorId}`;
-    const debtorAccountAql = aql`${debtorAccount}`;
-
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc._from == ${debtorAccountAql}
-      FILTER doc.TxTp == 'pacs.008.001.10'
-      SORT   doc.CreDtTm DESC
-      LIMIT 2
-      RETURN doc
-    `;
-
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.getCreditorPacs008Edges = async (creditorId: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
-    const creditorAccount = `accounts/${creditorId}`;
-    const creditorAccountAql = aql`${creditorAccount}`;
+    const db = manager._pseudonymsDb;
 
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc._to == ${creditorAccountAql}
-      FILTER doc.TxTp == 'pacs.008.001.10'
-      SORT   doc.CreDtTm DESC
+    const query = `
+      select
+        transaction_relationship
+      from
+        transaction_relationship
+      where
+        destination = $1
+      and
+        txTp = 'pacs.008.001.10'
+      order by creDtTm DESC
       LIMIT 2
-      RETURN doc
     `;
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    const res = await db?.query(query, [creditorId]);
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.getPreviousPacs008Edges = async (accountId: string, limit?: number, to?: string[]) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
+    const db = manager._pseudonymsDb;
 
-    const filters: GeneratedAqlQuery[] = [];
-    filters.push(aql`FILTER doc.TxTp == 'pacs.008.001.10'`);
-    if (to !== undefined) filters.push(aql`FILTER doc._to IN ${to}`);
+    const values: Array<string | number> = [accountId, 'pacs.008.001.10'];
+    let paramIndex = values.length + 1;
 
-    const aqlLimit = limit ? aql`${limit}` : aql`3`;
-    const account = `accounts/${accountId}`;
-    const accountAql = aql`${account}`;
+    let toFilter = '';
+    if (to !== undefined && Array.isArray(to) && to.length > 0) {
+      const placeholders = to.map(() => `$${paramIndex++}`).join(', ');
+      values.push(...to);
+      toFilter = `AND destination IN (${placeholders})`;
+    }
 
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc._from == ${accountAql}
-      ${join(filters)}
-      SORT doc.CreDtTm DESC
-      LIMIT ${aqlLimit}
-      RETURN doc
+    const safeLimit = typeof limit === 'number' && limit > 0 ? limit : 3;
+
+    const query = `
+      select
+        transaction_relationship
+      from
+        transaction_relationship
+      where
+        source = $1
+      and
+        tx_tp = $2
+      ${toFilter}
+      order by creDtTm desc
+      limit $${paramIndex}
     `;
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    values.push(safeLimit);
+
+    const res = await db?.query(query, values);
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.getCreditorPacs002Edges = async (creditorId: string, threshold: number) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.transactionRelationship);
-    const date: string = new Date(new Date().getTime() - threshold).toISOString();
+    const db = manager._pseudonymsDb;
 
-    const creditorAccount = `accounts/${creditorId}`;
-    const creditorAccountAql = aql`${creditorAccount}`;
+    const date = new Date(Date.now() - threshold).toISOString();
 
-    const query = aql`
-      FOR doc IN ${db}
-      FILTER doc._from == '${creditorAccountAql}' && doc.TxTp == 'pacs.002.001.12' && doc.TxSts == 'ACCC' && doc.CreDtTm >= ${date}
-        RETURN doc
+    const query = `
+      select
+        transaction_relationship
+      from
+        transaction_relationship
+      where
+        source = $1
+      and
+        txTp = 'pacs.002.001.12'
+      and
+        txSts = 'ACCC'
+      and
+        creDtTm >= $2
     `;
 
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
+    const values = [creditorId, date];
+    const res = await db?.query(query, values);
+    return res?.rows.map((value) => value.transaction_relationship);
   };
 
   manager.saveAccount = async (key: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.accounts);
-    return await db?.save({ _key: key }, { overwriteMode: 'ignore' });
+    const db = manager._pseudonymsDb;
+    await db?.query(`
+        insert into account
+          (id)
+        values
+          ($1)
+        on conflict (id) do nothing`,
+      [key],
+    );
   };
 
   manager.saveEntity = async (entityId: string, CreDtTm: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.entities);
-    return await db?.save({ _key: entityId, Id: entityId, CreDtTm }, { overwriteMode: 'ignore' });
+    const db = manager._pseudonymsDb;
+    await db?.query(`
+        insert into entity
+          (id, creDtTm)
+        values
+          ($1, $2)
+        on conflict (id) do nothing`,
+      [entityId, CreDtTm],
+    );
   };
 
   manager.saveAccountHolder = async (entityId: string, accountId: string, CreDtTm: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.account_holder);
-    const _key = `${accountId}${entityId}`;
-    const _from = `entities/${entityId}`;
-    const _to = `accounts/${accountId}`;
-
-    return await db?.save({ _key, _from, _to, CreDtTm }, { overwriteMode: 'ignore' });
-  };
-
-  manager.getConditionsByEntity = async (entityId: string, SchemeProprietary: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.conditions);
-    const date: string = new Date().toISOString();
-    const nttyPrtry = SchemeProprietary;
-    const nttyId = entityId;
-    const nttyPrtryAql = aql`AND doc.ntty.schmeNm.prtry == ${nttyPrtry}`;
-    const nttyIdAql = aql`FILTER doc.ntty.id == ${nttyId}`;
-
-    const query = aql`FOR doc IN ${db}
-    ${nttyIdAql}
-    ${nttyPrtryAql}
-    AND (doc.xprtnDtTm > ${date}
-    OR doc.xprtnDtTm == null)
-    RETURN doc`;
-
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
-  };
-
-  manager.getEntityConditionsByGraph = async (id: string, proprietary: string, retrieveAll?: boolean) => {
-    const nowDateTime = new Date().toISOString();
-    const filterAql = aql`
-      LET fromVertex = DOCUMENT(edge._from)
-      LET toVertex = DOCUMENT(edge._to)
-      FILTER toVertex.ntty.id == ${id}
-      ${!retrieveAll ? aql`AND toVertex.incptnDtTm < ${nowDateTime}` : aql``}
-      ${!retrieveAll ? aql`AND (toVertex.xprtnDtTm > ${nowDateTime} OR toVertex.xprtnDtTm == null)` : aql``}
-      AND toVertex.ntty.schmeNm.prtry == ${proprietary}
-      ${!retrieveAll ? aql`AND edge.incptnDtTm < ${nowDateTime}` : aql``}
-      ${!retrieveAll ? aql`AND (edge.xprtnDtTm > ${nowDateTime} OR edge.xprtnDtTm == null)` : aql``}`;
-
-    const result = await (
-      await manager._pseudonymsDb?.query<RawConditionResponse>(aql`
-      LET gov_cred = (
-          FOR edge IN governed_as_creditor_by
-          ${filterAql}
-          RETURN {
-              edge: edge,
-              result: fromVertex,
-              condition: toVertex
-          }
-      )
-
-      LET gov_debtor = (
-          FOR edge IN governed_as_debtor_by
-          ${filterAql}
-          RETURN {
-              edge: edge,
-              result: fromVertex,
-              condition: toVertex
-          }
-      )
-
-      RETURN {
-          "governed_as_creditor_by": gov_cred,
-          "governed_as_debtor_by": gov_debtor
-      }
-    `)
-    )?.batches.all();
-
-    return result;
-  };
-
-  manager.getAccountConditionsByGraph = async (id: string, proprietary: string, agt: string, retrieveAll?: boolean) => {
-    const nowDateTime = new Date().toISOString();
-
-    const filterAql = aql`
-      LET fromVertex = DOCUMENT(edge._from)
-      LET toVertex = DOCUMENT(edge._to)
-      FILTER toVertex.acct.id == ${id}
-      ${!retrieveAll ? aql`AND toVertex.incptnDtTm < ${nowDateTime}` : aql``}
-      ${!retrieveAll ? aql`AND (toVertex.xprtnDtTm > ${nowDateTime} OR toVertex.xprtnDtTm == null)` : aql``}
-      AND toVertex.acct.schmeNm.prtry == ${proprietary}
-      AND toVertex.acct.agt.finInstnId.clrSysMmbId.mmbId == ${agt}
-      ${!retrieveAll ? aql`AND edge.incptnDtTm < ${nowDateTime}` : aql``}
-      ${!retrieveAll ? aql`AND (edge.xprtnDtTm > ${nowDateTime} OR edge.xprtnDtTm == null)` : aql``}`;
-
-    const result = await (
-      await manager._pseudonymsDb?.query<RawConditionResponse>(aql`
-      LET gov_cred = (
-          FOR edge IN governed_as_creditor_account_by
-          ${filterAql}
-          RETURN {
-              edge: edge,
-              result: fromVertex,
-              condition: toVertex
-          }
-      )
-
-      LET gov_debtor = (
-          FOR edge IN governed_as_debtor_account_by
-          ${filterAql}
-          RETURN {
-              edge: edge,
-              result: fromVertex,
-              condition: toVertex
-          }
-      )
-
-      RETURN {
-          "governed_as_creditor_account_by": gov_cred,
-          "governed_as_debtor_account_by": gov_debtor
-      }
-    `)
-    )?.batches.all();
-
-    return result;
-  };
-
-  manager.getConditionsByGraph = async (activeOnly: boolean) => {
-    const date: string = new Date().toISOString();
-    let filter;
-    if (activeOnly) {
-      filter = `FILTER edge.xprtnDtTm < ${date}`;
-    }
-
-    const filterAql = aql`
-      LET fromVertex = DOCUMENT(edge._from)
-      LET toVertex = DOCUMENT(edge._to)
-      ${filter}`;
-
-    const result = await (
-      await manager._pseudonymsDb?.query<RawConditionResponse>(aql`
-      LET gov_acct_cred = (
-          FOR edge IN governed_as_creditor_account_by
-          ${filterAql}
-          RETURN {
-              edge: edge,
-              result: fromVertex,
-              condition: toVertex
-          }
-      )
-
-      LET gov_acct_debtor = (
-          FOR edge IN governed_as_debtor_account_by
-          ${filterAql}
-          RETURN {
-              edge: edge,
-              result: fromVertex,
-              condition: toVertex
-          }
-      )
-
-      LET gov_cred = (
-          FOR edge IN governed_as_creditor_by
-          ${filterAql}
-          RETURN {
-              edge: edge,
-              result: fromVertex,
-              condition: toVertex
-          }
-      )
-
-      LET gov_debtor = (
-          FOR edge IN governed_as_debtor_by
-          ${filterAql}
-          RETURN {
-              edge: edge,
-              result: fromVertex,
-              condition: toVertex
-          }
-      )
-
-      RETURN {
-          "governed_as_creditor_account_by": gov_acct_cred,
-          "governed_as_debtor_account_by": gov_acct_debtor,
-          "governed_as_creditor_by": gov_cred,
-          "governed_as_debtor_by": gov_debtor
-      }
-    `)
-    )?.batches.all();
-
-    return result;
-  };
-
-  manager.getConditionsByAccount = async (accountId: string, SchemeProprietary: string, agtMemberId: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.conditions);
-    const date: string = new Date().toISOString();
-    const acctPrtry = SchemeProprietary;
-    const acctId = accountId;
-    const conditionAgtMemberId = agtMemberId;
-    const acctIdAql = aql`FILTER doc.acct.id == ${acctId}`;
-    const acctPrtryAql = aql`AND doc.acct.schmeNm.prtry == ${acctPrtry}`;
-    const agtMemberIdAql = aql`AND doc.acct.agt.finInstnId.clrSysMmbId.mmbId == ${conditionAgtMemberId}`;
-    const query = aql`FOR doc IN ${db}
-    ${acctIdAql}
-    ${acctPrtryAql}
-    ${agtMemberIdAql}
-    AND (doc.xprtnDtTm > ${date}
-    OR doc.xprtnDtTm == null)
-    RETURN doc`;
-
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
-  };
-
-  manager.getConditions = async (activeOnly: boolean) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.conditions);
-    const date: string = new Date().toISOString();
-
-    let filter;
-    if (activeOnly) {
-      filter = `FILTER doc.xprtnDtTm < ${date}`;
-    }
-
-    const query = aql`FOR doc IN ${db}
-      ${filter}
-      RETURN doc`;
-
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
-  };
-
-  manager.getEntity = async (entityId: string, SchemeProprietary: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.entities);
-    const entityIdentity = `${entityId}${SchemeProprietary}`;
-    const entityIdAql = aql`FILTER doc._key == ${entityIdentity}`;
-
-    const query = aql`FOR doc IN ${db}
-      ${entityIdAql}
-      RETURN doc`;
-
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
-  };
-
-  manager.getAccount = async (accountId: string, SchemeProprietary: string, agtMemberId: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.accounts);
-    const accountIdentity = `${accountId}${SchemeProprietary}${agtMemberId}`;
-    const accountIdAql = aql`FILTER doc._key == ${accountIdentity}`;
-
-    const query = aql`FOR doc IN ${db}
-      ${accountIdAql}
-      RETURN doc`;
-
-    return await (await manager._pseudonymsDb?.query(query))?.batches.all();
-  };
-
-  manager.saveCondition = async (condition: EntityCondition | AccountCondition) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.conditions);
-    const uuid = v4();
-    return await db?.save({ ...condition, _key: uuid, condId: uuid }, { overwriteMode: 'ignore' });
-  };
-
-  manager.saveGovernedAsCreditorByEdge = async (conditionId: string, accountEntityId: string, conditionEdge: ConditionEdge) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.governed_as_creditor_by);
-    const _from = accountEntityId;
-    const _to = conditionId;
-
-    return await db?.save(
-      { _from, _to, evtTp: conditionEdge.evtTp, incptnDtTm: conditionEdge.incptnDtTm, xprtnDtTm: conditionEdge?.xprtnDtTm },
-      { overwriteMode: 'ignore' },
+    const db = manager._pseudonymsDb;
+    await db?.query(`
+        insert into account_holder
+          (source, destination, creDtTm)
+        values
+          ($1, $2, $3)
+        on conflict (source, destination) do nothing`,
+      [entityId, accountId, CreDtTm],
     );
-  };
-
-  manager.saveGovernedAsDebtorByEdge = async (conditionId: string, accountEntityId: string, conditionEdge: ConditionEdge) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.governed_as_debtor_by);
-    const _from = accountEntityId;
-    const _to = conditionId;
-
-    return await db?.save(
-      { _from, _to, evtTp: conditionEdge.evtTp, incptnDtTm: conditionEdge.incptnDtTm, xprtnDtTm: conditionEdge?.xprtnDtTm },
-      { overwriteMode: 'ignore' },
-    );
-  };
-
-  manager.saveGovernedAsCreditorAccountByEdge = async (conditionId: string, accountEntityId: string, conditionEdge: ConditionEdge) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.governed_as_creditor_account_by);
-    const _from = accountEntityId;
-    const _to = conditionId;
-
-    return await db?.save(
-      { _from, _to, evtTp: conditionEdge.evtTp, incptnDtTm: conditionEdge.incptnDtTm, xprtnDtTm: conditionEdge?.xprtnDtTm },
-      { overwriteMode: 'ignore' },
-    );
-  };
-
-  manager.saveGovernedAsDebtorAccountByEdge = async (conditionId: string, accountEntityId: string, conditionEdge: ConditionEdge) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.governed_as_debtor_account_by);
-    const _from = accountEntityId;
-    const _to = conditionId;
-
-    return await db?.save(
-      { _from, _to, evtTp: conditionEdge.evtTp, incptnDtTm: conditionEdge.incptnDtTm, xprtnDtTm: conditionEdge?.xprtnDtTm },
-      { overwriteMode: 'ignore' },
-    );
-  };
-
-  manager.updateExpiryDateOfAccountEdges = async (edgeCreditorByKey: string, edgeDebtorByKey: string, expireDateTime: string) => {
-    return await Promise.all([
-      edgeDebtorByKey
-        ? manager._pseudonymsDb
-            ?.collection(dbPseudonyms.governed_as_debtor_account_by)
-            ?.update(edgeDebtorByKey, { xprtnDtTm: expireDateTime }, { returnNew: true })
-        : undefined,
-      edgeCreditorByKey
-        ? manager._pseudonymsDb
-            ?.collection(dbPseudonyms.governed_as_creditor_account_by)
-            ?.update(edgeCreditorByKey, { xprtnDtTm: expireDateTime }, { returnNew: true })
-        : undefined,
-    ]);
-  };
-
-  manager.updateExpiryDateOfEntityEdges = async (edgeCreditorByKey: string, edgeDebtorByKey: string, expireDateTime: string) => {
-    return await Promise.all([
-      edgeDebtorByKey
-        ? manager._pseudonymsDb
-            ?.collection(dbPseudonyms.governed_as_debtor_by)
-            ?.update(edgeDebtorByKey, { xprtnDtTm: expireDateTime }, { returnNew: true })
-        : undefined,
-      edgeCreditorByKey
-        ? manager._pseudonymsDb
-            ?.collection(dbPseudonyms.governed_as_creditor_by)
-            ?.update(edgeCreditorByKey, { xprtnDtTm: expireDateTime }, { returnNew: true })
-        : undefined,
-    ]);
-  };
-
-  manager.updateCondition = async (conditionId: string, expireDateTime: string) => {
-    const db = manager._pseudonymsDb?.collection(dbPseudonyms.conditions);
-
-    return await db?.update(conditionId, { xprtnDtTm: expireDateTime }, { returnNew: true });
   };
 }

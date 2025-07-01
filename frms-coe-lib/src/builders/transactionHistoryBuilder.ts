@@ -24,7 +24,7 @@ export async function transactionHistoryBuilder(
   manager.getTransactionPacs008 = async (endToEndId: string) => {
     const db = manager._transactionHistory;
     const result = await db?.query('select document from pacs008 where endToEndId = $1', [endToEndId]);
-    return result?.rows[0];
+    return result?.rows[0].document;
   };
 
   manager.getSuccessfulPacs002Msgs = async (endToEndId: string) => {
@@ -46,7 +46,7 @@ export async function transactionHistoryBuilder(
       [endToEndId, 'ACCC'],
     );
 
-    return result?.rows[0];
+    return result?.rows[0].document;
   };
 
   manager.getSuccessfulPacs002EndToEndIds = async (endToEndIds: string[]) => {
@@ -98,16 +98,16 @@ export async function transactionHistoryBuilder(
     const accountPath = isCreditor ? 'CdtrAcct' : 'DbtrAcct';
 
     const query = `
-    select
-      document
-    from
-      pacs008,
-      jsonb_array_elements(
-        document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'${accountPath}'->'Id'->'Othr'
-      ) AS othr
-    where
-      othr->>'id' = $1;
-  `;
+      select
+        document
+      from
+        pacs008,
+        jsonb_array_elements(
+          document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'${accountPath}'->'Id'->'Othr'
+        ) AS othr
+      where
+        othr->>'id' = $1;
+    `;
 
     const result = await db?.query(query, [accountId]);
     return result?.rows.map((row) => row.document);

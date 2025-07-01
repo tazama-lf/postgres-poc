@@ -2,7 +2,7 @@
 
 import NodeCache from 'node-cache';
 import { type Typology } from '../interfaces';
-import { type LocalCacheConfig, readyChecks, type DatabaseManagerType, type DBConfig } from '../services/dbManager';
+import { type LocalCacheConfig, type DatabaseManagerType, type DBConfig } from '../services/dbManager';
 import { Pool } from 'pg';
 
 export async function configurationBuilder(
@@ -49,7 +49,7 @@ export async function configurationBuilder(
     if (cacheConfig?.localCacheEnabled && toReturn && toReturn.rows && toReturn.rows.length === 1) {
       manager.nodeCache?.set(cacheKey, toReturn, cacheConfig?.localCacheTTL ?? 3000);
     }
-    return toReturn;
+    return toReturn?.rows[0].configuration;
   };
 
   manager.getTypologyConfig = async (typology: Typology) => {
@@ -77,7 +77,7 @@ export async function configurationBuilder(
     if (cacheConfig?.localCacheEnabled && toReturn && toReturn.rows && toReturn.rows.length === 1) {
       manager.nodeCache?.set(cacheKey, toReturn, cacheConfig?.localCacheTTL ?? 3000);
     }
-    return toReturn;
+    return toReturn?.rows[0].configuration;
   };
 
   manager.getNetworkMap = async () => {
@@ -93,6 +93,6 @@ export async function configurationBuilder(
       `,
       [true],
     );
-    return toReturn?.rows;
+    return toReturn?.rows[0].configuration;
   };
 }
