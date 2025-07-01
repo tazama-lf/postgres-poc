@@ -7,10 +7,10 @@ create table typology (
     uuid uuid primary key,
     configuration jsonb not null,
     typologyId text generated always as (
-        configuration->'typologyId'
+        configuration->>'typologyId'
     ) stored,
     typologyCfg text generated always as (
-        configuration->'typologyCfg'
+        configuration->>'typologyCfg'
     ) stored,
     unique (typologyId, typologyCfg)
 );
@@ -19,10 +19,10 @@ create table rule (
     uuid uuid primary key,
     configuration jsonb not null,
     ruleId text generated always as (
-        configuration->'id'
+        configuration->>'id'
     ) stored,
     ruleCfg text generated always as (
-        configuration->'cfg'
+        configuration->>'cfg'
     ) stored,
     unique (ruleId, ruleCfg)
 );
