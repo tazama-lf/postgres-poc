@@ -15,10 +15,6 @@ export async function configurationBuilder(
     database: configurationConfig.databaseName,
     user: configurationConfig.user,
     password: configurationConfig.password,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-    maxLifetimeSeconds: 60,
   });
 
   manager.setupConfig = configurationConfig;

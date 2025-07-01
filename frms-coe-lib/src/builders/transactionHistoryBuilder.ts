@@ -15,10 +15,6 @@ export async function transactionHistoryBuilder(
     database: transactionHistoryConfig.databaseName,
     user: transactionHistoryConfig.user,
     password: transactionHistoryConfig.password,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-    maxLifetimeSeconds: 60,
   });
 
   manager.getTransactionPacs008 = async (endToEndId: string) => {

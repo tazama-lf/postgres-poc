@@ -11,10 +11,6 @@ export async function transactionBuilder(manager: DatabaseManagerType, transacti
     database: transactionConfig.databaseName,
     user: transactionConfig.user,
     password: transactionConfig.password,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-    maxLifetimeSeconds: 60,
   });
 
   manager.getReportByMessageId = async (messageid: string) => {

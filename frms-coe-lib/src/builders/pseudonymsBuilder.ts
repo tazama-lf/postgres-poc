@@ -10,10 +10,6 @@ export async function pseudonymsBuilder(manager: DatabaseManagerType, pseudonyms
     database: pseudonymsConfig.databaseName,
     user: pseudonymsConfig.user,
     password: pseudonymsConfig.password,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-    maxLifetimeSeconds: 60,
   });
 
   manager.getPseudonyms = async (hash: string) => {
