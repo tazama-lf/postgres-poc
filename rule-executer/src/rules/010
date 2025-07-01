@@ -1,0 +1,277 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  type DatabaseManagerInstance,
+  type LoggerService,
+  type ManagerConfig,
+} from '@tazama-lf/frms-coe-lib';
+import {
+  type RuleConfig,
+  type RuleRequest,
+  type RuleResult,
+} from '@tazama-lf/frms-coe-lib/lib/interfaces';
+// @ts-ignore
+
+import IgniteClient from 'apache-ignite-client';
+import { pseudonymsdb } from '../client/ignite';
+
+const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
+
+export interface QueryResult {
+  CreDtTm: string;
+  EndToEndId: string;
+}
+
+export async function handleRule010(
+  req: RuleRequest,
+  determineOutcome: (
+    value: number,
+    ruleConfig: RuleConfig,
+    ruleResult: RuleResult,
+  ) => RuleResult,
+  ruleRes: RuleResult,
+  _loggerService: LoggerService,
+  ruleConfig: RuleConfig,
+  databaseManager: DatabaseManagerInstance<ManagerConfig>,
+): Promise<RuleResult> {
+  // Guard statements to throw errors early
+  if (!ruleConfig.config.bands || ruleConfig.config.bands.length <= 0) {
+    throw new Error('Invalid config provided - bands not provided');
+  }
+  if (!ruleConfig.config.exitConditions) {
+    throw new Error('Invalid config provided - exitConditions not provided');
+  }
+  if (
+    !ruleConfig.config.parameters ||
+    typeof ruleConfig.config.parameters.evaluationIntervalTime !== 'number'
+  ) {
+    throw new Error('Invalid config provided - parameters not provided');
+  }
+
+  const evaluationIntervalTime =
+    ruleConfig.config.parameters.evaluationIntervalTime;
+
+  const InsufficientHistory = ruleConfig.config.exitConditions.find(
+    (b: { reason: string; subRuleRef: string }) => b.subRuleRef === '.x01',
+  );
+
+  const UnsuccessfulTransaction = ruleConfig.config.exitConditions.find(
+    (b: { reason: string; subRuleRef: string }) => b.subRuleRef === '.x00',
+  );
+
+  const NoVarianceIncrease = ruleConfig.config.exitConditions.find(
+    (b: { reason: string; subRuleRef: string }) => b.subRuleRef === '.x03',
+  );
+
+  const NoVarianceEqualOrDecrease = ruleConfig.config.exitConditions.find(
+    (b: { reason: string; subRuleRef: string }) => b.subRuleRef === '.x04',
+  );
+
+  if (req.transaction.FIToFIPmtSts.TxInfAndSts.TxSts !== 'ACCC') {
+    if (UnsuccessfulTransaction === undefined) {
+      throw new Error(
+        'Unsuccessful transaction and no exit condition in config',
+      );
+    }
+
+    return {
+      ...ruleRes,
+      reason: UnsuccessfulTransaction.reason,
+      subRuleRef: UnsuccessfulTransaction.subRuleRef,
+    };
+  }
+
+  const endToEndId = req.transaction.FIToFIPmtSts.TxInfAndSts.OrgnlEndToEndId;
+  const debtorAccountId = `accounts/${req.DataCache.dbtrAcctId}`;
+
+  const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
+
+  const queryString = new SqlFieldsQuery(
+    'SELECT TR_END_TO_END_ID, TR_CRE_DT_TM FROM pseudonymsschema.transactionrelationship WHERE TR_TO = ? AND TR_TXTP = ? AND TR_TXSTS = ? AND TR_CRE_DT_TM <= ? ORDER BY TR_CRE_DT_TM DESC;',
+  ).setArgs(
+    debtorAccountId,
+    'pacs.002.001.12',
+    'ACCC',
+    currentPacs002TimeFrame,
+  );
+
+  const cursor = await pseudonymsdb.query(queryString);
+
+  const timestamps = (await cursor.getAll()) as Array<[string, string]>;
+
+  const e2eIndex = timestamps.findIndex((i) => i[0] === endToEndId);
+
+  if (
+    typeof e2eIndex !== 'number' ||
+    !timestamps ||
+    !timestamps[0] ||
+    e2eIndex < 0
+  ) {
+    if (InsufficientHistory === undefined) {
+      throw new Error('Insufficient History and no exit condition in config');
+    }
+
+    return {
+      ...ruleRes,
+      subRuleRef: InsufficientHistory.subRuleRef,
+
+      reason: InsufficientHistory.reason,
+    };
+  }
+
+  const queryResult: QueryResult = {
+    CreDtTm: timestamps[0][1],
+    EndToEndId: timestamps[0][1],
+  };
+
+  /* eslint-disable-next-line @typescript-eslint/no-unsafe-argument */
+  const transactions = new Set<QueryResult>([queryResult]);
+
+  if (!isSuccessSet(transactions)) {
+    throw new Error(
+      'Data error: query result type mismatch - expected [timestamps]',
+    );
+  }
+
+  const historgram = createHistogram(evaluationIntervalTime, transactions);
+
+  // Remove most recent interval from as its excluded from standard deviation calculation
+  const currentInterval = historgram.pop() ?? 0;
+
+  // Get total count of successful transactions excluding most recent interval
+  const total = transactions.size - currentInterval;
+
+  const { avg, stdDev } = calcAvgAndStandardDev(historgram, total);
+
+  /*
+    If the standard deviation = 0 and the number of transactions in the most recent interval > the historical average number of transactions, abort with exit condition .x03
+  */
+  if (stdDev === 0 && currentInterval > avg) {
+    if (NoVarianceIncrease === undefined) {
+      throw new Error(
+        'No Variance with Increase and no exit condition in config',
+      );
+    }
+
+    return {
+      ...ruleRes,
+      subRuleRef: NoVarianceIncrease.subRuleRef,
+
+      reason: NoVarianceIncrease.reason,
+    };
+  }
+
+  /*
+    If the standard deviation = 0 and the number of transactions in the most recent interval > the historical average number of transactions, abort with exit condition .x04
+  */
+
+  if (stdDev === 0 && currentInterval <= avg) {
+    if (NoVarianceEqualOrDecrease === undefined) {
+      throw new Error(
+        'No Variance with Equal or Decrease and no exit condition in config',
+      );
+    }
+
+    return {
+      ...ruleRes,
+      subRuleRef: NoVarianceEqualOrDecrease.subRuleRef,
+
+      reason: NoVarianceEqualOrDecrease.reason,
+    };
+  }
+
+  for (let i = 0; i < ruleConfig.config.bands.length; i++) {
+    if (
+      'upperLimit' in ruleConfig.config.bands[i] &&
+      typeof ruleConfig.config.bands[i].upperLimit === 'number'
+    ) {
+      ruleConfig.config.bands[i].upperLimit =
+        ruleConfig.config.bands[i].upperLimit! * stdDev + avg;
+    }
+    if (
+      'lowerLimit' in ruleConfig.config.bands[i] &&
+      typeof ruleConfig.config.bands[i].lowerLimit === 'number'
+    ) {
+      ruleConfig.config.bands[i].lowerLimit =
+        ruleConfig.config.bands[i].lowerLimit! * stdDev + avg;
+    }
+  }
+
+  ruleRes = determineOutcome(currentInterval, ruleConfig, ruleRes);
+
+  return ruleRes;
+}
+
+function isSuccessSet(arr: Set<QueryResult>): boolean {
+  for (const el of arr) {
+    if (
+      el === null ||
+      typeof el !== 'object' ||
+      !('CreDtTm' in el) ||
+      !('EndToEndId' in el) ||
+      typeof el.CreDtTm !== 'string' ||
+      typeof el.EndToEndId !== 'string'
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function calcAvgAndStandardDev(
+  arr: number[],
+  dataSetLen: number,
+): {
+  avg: number;
+  stdDev: number;
+} {
+  const n = arr.length;
+  let sumSquared = 0;
+
+  const avg = dataSetLen / n;
+
+  arr.forEach((el) => {
+    sumSquared += (el - avg) * (el - avg);
+  });
+
+  const variance = sumSquared ? sumSquared / (n - 1) : 0;
+  const stdDev = Math.sqrt(variance);
+
+  return { avg, stdDev };
+}
+
+function createHistogram(
+  interval: number,
+  dataSet: Set<QueryResult>,
+): number[] {
+  if (interval <= 0) return [];
+
+  const countsPerInterval: number[] = [];
+  const creationDateTimePool = [];
+
+  for (const val of dataSet.keys()) {
+    creationDateTimePool.push(new Date(val.CreDtTm).getTime());
+  }
+
+  const maxDate = creationDateTimePool[0];
+  const numOfDates = creationDateTimePool.length;
+
+  let window = new Date(maxDate).getTime() - interval;
+  for (
+    let index = 0, currentInterval = 0, checkCount = 0;
+    checkCount < numOfDates;
+    window -= interval, index++
+  ) {
+    countsPerInterval[index] = 0;
+
+    for (; currentInterval < numOfDates; currentInterval++) {
+      const currentDate = creationDateTimePool[currentInterval];
+      if (currentDate < window) {
+        break;
+      }
+      checkCount++;
+      countsPerInterval[index] += 1;
+    }
+  }
+  return countsPerInterval.reverse();
+}

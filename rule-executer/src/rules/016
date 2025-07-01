@@ -1,0 +1,82 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  type DatabaseManagerInstance,
+  type LoggerService,
+  type ManagerConfig,
+} from '@tazama-lf/frms-coe-lib';
+import {
+  type RuleConfig,
+  type RuleRequest,
+  type RuleResult,
+} from '@tazama-lf/frms-coe-lib/lib/interfaces';
+import { unwrap } from '@tazama-lf/frms-coe-lib/lib/helpers/unwrap';
+import { pseudonymsdb } from '../client/ignite';
+// @ts-ignore
+import IgniteClient from 'apache-ignite-client';
+
+const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
+
+export async function handleRule016(
+  req: RuleRequest,
+  determineOutcome: (
+    value: number,
+    ruleConfig: RuleConfig,
+    ruleResult: RuleResult,
+  ) => RuleResult,
+  ruleRes: RuleResult,
+  _loggerService: LoggerService,
+  ruleConfig: RuleConfig,
+  databaseManager: DatabaseManagerInstance<ManagerConfig>,
+): Promise<RuleResult> {
+  if (!ruleConfig?.config?.parameters) {
+    throw new Error('Invalid config provided - parameters not provided');
+  }
+  if (!ruleConfig.config.parameters.maxQueryRange) {
+    throw new Error(
+      'Invalid config provided - maxQueryRange parameter not provided',
+    );
+  }
+  if (!ruleConfig.config.bands) {
+    throw new Error('Invalid config provided - bands not provided');
+  }
+  if (!req.DataCache || req.DataCache.cdtrAcctId == null) {
+    throw new Error('Data Cache does not have required cdtrAcctId');
+  }
+  const creditorAccountId = `accounts/${req.DataCache.cdtrAcctId}`;
+  const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
+
+  const maxQueryRange: number = ruleConfig.config.parameters
+    .maxQueryRange as number;
+
+  const queryString = new SqlFieldsQuery(`
+    select count (*) from pseudonymsschema.transactionrelationship
+      where TR_FROM = ? 
+        and TR_TXTP = ?
+        and TR_TXSTS = ?
+        AND TIMESTAMPDIFF(SECOND, TR_CRE_DT_TM, ?) <= ?;`).setArgs(
+    creditorAccountId,
+    'pacs.002.001.12',
+    'ACCC',
+    currentPacs002TimeFrame,
+    maxQueryRange,
+  );
+
+  const cursor = await pseudonymsdb.query(queryString);
+  const results = (await cursor.getAll()) as Array<[number]>;
+
+  const count = unwrap(results);
+
+  if (count == null) {
+    // 0 is a legal value
+    throw new Error('Data error: irretrievable transaction history');
+  }
+
+  if (typeof count !== 'number') {
+    throw new Error(
+      'Data error: query result type mismatch - expected a number',
+    );
+  }
+
+  return determineOutcome(count, ruleConfig, ruleRes);
+}

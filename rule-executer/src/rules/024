@@ -1,0 +1,206 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  type DatabaseManagerInstance,
+  type LoggerService,
+  type ManagerConfig,
+} from '@tazama-lf/frms-coe-lib';
+import {
+  type OutcomeResult,
+  type RuleConfig,
+  type RuleRequest,
+  type RuleResult,
+} from '@tazama-lf/frms-coe-lib/lib/interfaces';
+import { unwrap } from '@tazama-lf/frms-coe-lib/lib/helpers/unwrap';
+import { pseudonymsdb } from '../client/ignite';
+// @ts-ignore
+import IgniteClient from 'apache-ignite-client';
+
+const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
+
+export const amountTracking = (
+  tolerance: number,
+  targetAmount: number,
+  historicalAmounts: number[],
+): number => {
+  let amountTracker = 0;
+  const offsetTolerance = targetAmount * tolerance;
+
+  for (let i = 0; i < historicalAmounts.length; i++) {
+    const amount = historicalAmounts[i];
+    amountTracker += amount;
+
+    if (
+      amountTracker > targetAmount - offsetTolerance &&
+      amountTracker < targetAmount + offsetTolerance
+    ) {
+      return i + 1;
+    }
+  }
+
+  return -1;
+};
+
+export const handleRule024 = async (
+  req: RuleRequest,
+  determineOutcome: (
+    value: number,
+    ruleConfig: RuleConfig,
+    ruleResult: RuleResult,
+  ) => RuleResult,
+  ruleResult: RuleResult,
+  _loggerService: LoggerService,
+  ruleConfig: RuleConfig,
+  databaseManager: DatabaseManagerInstance<ManagerConfig>,
+): Promise<RuleResult> => {
+  if (!ruleConfig?.config?.bands) {
+    throw new Error('Invalid config provided - bands not provided');
+  }
+
+  if (!ruleConfig.config.parameters) {
+    throw new Error('Invalid config provided - parameters not provided');
+  }
+
+  // if (!ruleConfig.config.parameters.tolerance || typeof ruleConfig.config.parameters.tolerance !== 'number') {
+  //   throw new Error('Invalid config provided - tolerance parameter not provided or invalid type');
+  // }
+
+  // if (!ruleConfig.config.parameters.maxQueryRange || typeof ruleConfig.config.parameters.maxQueryRange !== 'number') {
+  //   throw new Error('Invalid config provided - maxQueryRange parameter not provided or invalid type');
+  // }
+
+  if (!ruleConfig.config.exitConditions) {
+    throw new Error('Invalid config provided - exitConditions not provided');
+  }
+
+  if (req.transaction.FIToFIPmtSts.TxInfAndSts.TxSts !== 'ACCC') {
+    const UnsuccessfulTransaction = ruleConfig.config.exitConditions.find(
+      (b: OutcomeResult) => b.subRuleRef === '.x00',
+    );
+    if (UnsuccessfulTransaction === undefined) {
+      throw new Error(
+        'Unsuccessful transaction and no exit condition in config',
+      );
+    }
+    return {
+      ...ruleResult,
+      reason: UnsuccessfulTransaction.reason,
+      subRuleRef: UnsuccessfulTransaction.subRuleRef,
+    };
+  }
+
+  if (!req.DataCache.cdtrAcctId) {
+    throw new Error('DataCache object not retrievable');
+  }
+
+  if (!req.DataCache.creDtTm) {
+    throw new Error('DataCache does not have CreDtTm');
+  }
+
+  const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
+  const creditorAccountId = `accounts/${req.DataCache.cdtrAcctId}`;
+  const maxQueryRange: number = ruleConfig.config.parameters
+    .maxQueryRange as number;
+  const credttm = req.DataCache.creDtTm;
+
+  const queryString = new SqlFieldsQuery(`
+ WITH newestPacs008 AS (
+    SELECT TOP 1 tr_Amt
+    FROM transactionRelationship
+    WHERE tr_from = ?
+    AND tr_TxTp = 'pacs.008.001.10'
+    AND tr_Cre_Dt_Tm < ?
+    ORDER BY tr_Cre_Dt_Tm DESC
+),
+allSuccessfulPacs002 AS (
+    SELECT tr_End_To_End_Id
+    FROM transactionRelationship
+    WHERE tr_from = ?
+    AND tr_TxTp = 'pacs.002.001.12'
+    AND tr_TxSts = 'ACCC'
+    AND DATEDIFF(SECOND, tr_Cre_Dt_Tm, (SELECT tr_Cre_Dt_Tm FROM newestPacs008)) <= ?
+    AND DATEDIFF(SECOND, tr_Cre_Dt_Tm, (SELECT tr_Cre_Dt_Tm FROM newestPacs008)) > 0
+    AND tr_Cre_Dt_Tm <= ? 
+),
+historicalAmounts AS (
+    SELECT tr_Amt
+    FROM transactionRelationship
+    WHERE tr_TxTp = 'pacs.008.001.10'
+    AND tr_End_To_End_Id IN (SELECT tr_End_To_End_Id FROM allSuccessfulPacs002)
+    ORDER BY tr_Cre_Dt_Tm DESC
+)
+SELECT 
+    (SELECT tr_Amt FROM newestPacs008) AS targetAmount,
+    historicalAmounts.tr_Amt AS historicalAmounts
+FROM historicalAmounts;
+`).setArgs(
+    creditorAccountId,
+    credttm,
+    creditorAccountId,
+    maxQueryRange,
+    currentPacs002TimeFrame,
+  );
+
+  const cursor = await pseudonymsdb.query(queryString);
+
+  const res = await cursor.getAll() as Array<[number, number[]]>;
+
+  const recentSuccessfulTransactionsAndTargetAmount: Array<{
+    targetAmount: number;
+    historicalAmounts: number[];
+  }> = res.map((value) => {
+    return {
+      targetAmount: value[0],
+      historicalAmounts: value[1],
+    };
+  });
+
+  const unWrappedResult = unwrap<{
+    targetAmount: number;
+    historicalAmounts: number[];
+  }>([recentSuccessfulTransactionsAndTargetAmount]);
+
+  if (!unWrappedResult?.historicalAmounts[0]) {
+    const reason =
+      ruleConfig.config.exitConditions.find(
+        (exit) => exit.subRuleRef === '.x01',
+      )?.reason ??
+      'Insufficient transaction history and no exit condition in config';
+    return { ...ruleResult, subRuleRef: '.x01', reason };
+  }
+
+  if (!unWrappedResult.targetAmount) {
+    throw new Error('Data error: irretrievable transaction history');
+  }
+
+  const allNumbers = unWrappedResult.historicalAmounts.every(
+    (element) => typeof element === 'number',
+  );
+
+  if (!allNumbers) {
+    throw new Error(
+      'Data error: query result type mismatch - expected [numbers]',
+    );
+  }
+
+  const tolerance: number = ruleConfig.config.parameters.tolerance as number;
+  const targetAmount: number = unWrappedResult.targetAmount;
+  const historicalAmounts: number[] = unWrappedResult.historicalAmounts;
+
+  const iterationValue = amountTracking(
+    tolerance,
+    targetAmount,
+    historicalAmounts,
+  );
+
+  if (iterationValue === -1) {
+    const reason =
+      ruleConfig.config.exitConditions.find(
+        (exit) => exit.subRuleRef === '.x03',
+      )?.reason ??
+      'No non-commissioned transaction mirroring detected and no exit condition in config';
+    return { ...ruleResult, subRuleRef: '.x03', reason };
+  }
+
+  return determineOutcome(iterationValue, ruleConfig, ruleResult);
+};

@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  type DatabaseManagerInstance,
+  type LoggerService,
+  type ManagerConfig,
+} from '@tazama-lf/frms-coe-lib';
+import {
+  type RuleConfig,
+  type RuleRequest,
+  type RuleResult,
+  type OutcomeResult,
+} from '@tazama-lf/frms-coe-lib/lib/interfaces';
+import { pseudonymsdb } from '../client/ignite';
+// @ts-ignore
+import IgniteClient from 'apache-ignite-client';
+
+const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
+
+export const handleRule030 = async (
+  req: RuleRequest,
+  determineOutcome: (
+    value: number,
+    ruleConfig: RuleConfig,
+    ruleResult: RuleResult,
+  ) => RuleResult,
+  ruleResult: RuleResult,
+  loggerService: LoggerService,
+  ruleConfig: RuleConfig,
+  databaseManager: DatabaseManagerInstance<ManagerConfig>,
+): Promise<RuleResult> => {
+  if (!ruleConfig?.config?.bands) {
+    throw new Error('Invalid config provided - bands not provided');
+  }
+
+  if (!ruleConfig.config.exitConditions) {
+    throw new Error('Invalid config provided - exitConditions not provided');
+  }
+
+  if (req.transaction.FIToFIPmtSts.TxInfAndSts.TxSts !== 'ACCC') {
+    const UnsuccessfulTransaction = ruleConfig.config.exitConditions.find(
+      (b: OutcomeResult) => b.subRuleRef === '.x00',
+    );
+    if (UnsuccessfulTransaction === undefined) {
+      throw new Error(
+        'Unsuccessful transaction and no exit condition in config',
+      );
+    }
+    return {
+      ...ruleResult,
+      reason: UnsuccessfulTransaction.reason,
+      subRuleRef: UnsuccessfulTransaction.subRuleRef,
+    };
+  }
+
+  if (!req.DataCache.cdtrAcctId || !req.DataCache.dbtrAcctId) {
+    throw new Error('DataCache object not retrievable');
+  }
+
+  const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
+
+  const creditorAccountId = `accounts/${req.DataCache.cdtrAcctId}`;
+
+  const debtorAccountId = `accounts/${req.DataCache.dbtrAcctId}`;
+
+  const queryString = new SqlFieldsQuery(`
+  select count (*) from pseudonymsschema.transactionrelationship
+    where TR_FROM = ? 
+      and TR_TO = ? 
+      and TR_TXTP = ?
+      and TR_TXSTS = ?
+      and TR_CRE_DT_TM <= ?;`).setArgs(
+    creditorAccountId,
+    debtorAccountId,
+    'pacs.002.001.12',
+    'ACCC',
+    currentPacs002TimeFrame,
+  );
+
+  const cursor = await pseudonymsdb.query(queryString);
+  const results = (await cursor.getAll()) as Array<[number]>;
+  const numberOfSuccessfulTransactions = results[0][0];
+
+  // const numberOfSuccessfulTransactionsData: number[][] = await (await databaseManager._pseudonymsDb.query(queryString)).batches.all();
+
+  // const numberOfSuccessfulTransactions: number = unwrap<number>(numberOfSuccessfulTransactionsData) ?? 0;
+
+  if (!numberOfSuccessfulTransactions) {
+    throw new Error(
+      'Data error: irretrievable successful transaction from creditor and debtor accounts',
+    );
+  }
+
+  if (typeof numberOfSuccessfulTransactions !== 'number') {
+    throw new Error('Data error: query result type mismatch - expected number');
+  }
+
+  return determineOutcome(
+    numberOfSuccessfulTransactions,
+    ruleConfig,
+    ruleResult,
+  );
+};

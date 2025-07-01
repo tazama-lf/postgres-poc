@@ -1,0 +1,153 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  type DatabaseManagerInstance,
+  type LoggerService,
+  type ManagerConfig,
+} from '@tazama-lf/frms-coe-lib';
+import {
+  type OutcomeResult,
+  type RuleConfig,
+  type RuleRequest,
+  type RuleResult,
+} from '@tazama-lf/frms-coe-lib/lib/interfaces';
+import { pseudonymsdb } from '../client/ignite';
+// @ts-ignore
+
+import IgniteClient from 'apache-ignite-client';
+
+const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
+
+export const calculateBenfordsLaw = (historicAmounts: number[]): number => {
+  let chiSquare = 0;
+  const numAmounts = historicAmounts.length;
+  const observed = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const BenfordsLawArray = [
+    0.30103, 0.17609, 0.12494, 0.09691, 0.07918, 0.06695, 0.05799, 0.05115,
+    0.04576,
+  ];
+  const expected = BenfordsLawArray.map((value) => value * numAmounts);
+
+  historicAmounts.forEach((number: number) => {
+    observed[Number(String(number).substring(0, 1)) - 1]++;
+  });
+
+  for (let index = 0; index < expected.length; index++) {
+    chiSquare +=
+      Math.pow(observed[index] - expected[index], 2) / expected[index];
+  }
+
+  return chiSquare;
+};
+
+export const handleRule063 = async (
+  req: RuleRequest,
+  determineOutcome: (
+    value: number,
+    ruleConfig: RuleConfig,
+    ruleResult: RuleResult,
+  ) => RuleResult,
+  ruleResult: RuleResult,
+  _loggerService: LoggerService,
+  ruleConfig: RuleConfig,
+  databaseManager: DatabaseManagerInstance<ManagerConfig>,
+): Promise<RuleResult> => {
+  if (!ruleConfig?.config?.bands) {
+    throw new Error('Invalid config provided - bands not provided');
+  }
+
+  if (!ruleConfig.config.parameters) {
+    throw new Error('Invalid config provided - parameters not provided');
+  }
+
+  if (
+    !ruleConfig.config.parameters.minimumNumberOfTransactions ||
+    typeof ruleConfig.config.parameters.minimumNumberOfTransactions !== 'number'
+  ) {
+    throw new Error(
+      'Invalid config provided - Minimum number of transactions parameter not provided or invalid type',
+    );
+  }
+
+  if (!ruleConfig.config.exitConditions) {
+    throw new Error('Invalid config provided - exitConditions not provided');
+  }
+
+  if (req.transaction.FIToFIPmtSts.TxInfAndSts.TxSts !== 'ACCC') {
+    const UnsuccessfulTransaction = ruleConfig.config.exitConditions.find(
+      (b: OutcomeResult) => b.subRuleRef === '.x00',
+    );
+    if (UnsuccessfulTransaction === undefined) {
+      throw new Error(
+        'Unsuccessful transaction and no exit condition in config',
+      );
+    }
+    return {
+      ...ruleResult,
+      reason: UnsuccessfulTransaction.reason,
+      subRuleRef: UnsuccessfulTransaction.subRuleRef,
+    };
+  }
+
+  if (!req.DataCache.cdtrAcctId) {
+    throw new Error('DataCache object not retrievable');
+  }
+
+  const creditorAccountId = `accounts/${req.DataCache.cdtrAcctId}`;
+  const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
+
+  const queryString = new SqlFieldsQuery(`
+    WITH allSuccessfulPacs002 AS (
+      SELECT TR_END_TO_END_ID
+      FROM transactionRelationship
+      WHERE TR_from = ? 
+      AND TR_TxTp = 'pacs.002.001.12'
+      AND TR_TxSts = 'ACCC'
+      AND TR_Cre_Dt_Tm <= ?
+  )
+    SELECT 
+        CAST(pacs008.TR_Amt AS DECIMAL) AS Amt  -- Convert Amt to a number
+    FROM transactionRelationship pacs008
+    WHERE pacs008.TR_TxTp = 'pacs.008.001.10'
+    AND pacs008.TR_End_To_End_Id IN (SELECT TR_End_To_End_Id FROM allSuccessfulPacs002)
+    `).setArgs(creditorAccountId, currentPacs002TimeFrame);
+
+  const cursor = await pseudonymsdb.query(queryString);
+  const historicalAmountsData = (await cursor.getAll()) as Array<[number]>;
+
+
+  if (
+    !Array.isArray(historicalAmountsData) ||
+    !Array.isArray(historicalAmountsData[0])
+  ) {
+    throw new Error('Data error: irretrievable transaction history');
+  }
+
+  const historicalAmounts: number[] = historicalAmountsData[0];
+
+  if (
+    historicalAmounts.length <
+    ruleConfig.config.parameters.minimumNumberOfTransactions
+  ) {
+    const reason =
+      ruleConfig.config.exitConditions.find(
+        (exit) => exit.subRuleRef === '.x01',
+      )?.reason ??
+      'At least 50 historical transactions required and the exit condition was not found in the config';
+    return { ...ruleResult, subRuleRef: '.x01', reason };
+  }
+
+  const allNumbers = historicalAmounts.every(
+    (element) => typeof element === 'number',
+  );
+
+  if (!allNumbers) {
+    throw new Error(
+      'Data error: query result type mismatch - expected [amounts]',
+    );
+  }
+
+  const chiSquareValue = calculateBenfordsLaw(historicalAmounts);
+
+  return determineOutcome(chiSquareValue, ruleConfig, ruleResult);
+};

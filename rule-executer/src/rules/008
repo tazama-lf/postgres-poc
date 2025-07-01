@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  type DatabaseManagerInstance,
+  type LoggerService,
+  type ManagerConfig,
+} from '@tazama-lf/frms-coe-lib';
+import {
+  type RuleConfig,
+  type RuleRequest,
+  type RuleResult,
+} from '@tazama-lf/frms-coe-lib/lib/interfaces';
+
+import { pseudonymsdb } from '../client/ignite';
+// @ts-ignore
+
+import IgniteClient from 'apache-ignite-client';
+
+const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
+
+export const handleRule008 = async (
+  req: RuleRequest,
+  determineOutcome: (
+    value: number,
+    ruleConfig: RuleConfig,
+    ruleResult: RuleResult,
+  ) => RuleResult,
+  ruleResult: RuleResult,
+  _loggerService: LoggerService,
+  ruleConfig: RuleConfig,
+  databaseManager: DatabaseManagerInstance<ManagerConfig>,
+): Promise<RuleResult> => {
+  if (!ruleConfig?.config?.bands) {
+    throw new Error('Invalid config provided - bands not provided');
+  }
+
+  if (!ruleConfig.config.exitConditions) {
+    throw new Error('Invalid config provided - exitConditions not provided');
+  }
+
+  if (!req.DataCache.dbtrAcctId) {
+    throw new Error('DataCache object not retrievable');
+  }
+
+  const maxQueryLimit: number | undefined = ruleConfig.config.parameters
+    ?.maxQueryLimit as number;
+
+  if (req.transaction.FIToFIPmtSts.TxInfAndSts.TxSts !== 'ACCC') {
+    const UnsuccessfulTransaction = ruleConfig.config.exitConditions.find(
+      (b: { reason: string; subRuleRef: string }) => b.subRuleRef === '.x00',
+    );
+
+    if (UnsuccessfulTransaction === undefined) {
+      throw new Error(
+        'Unsuccessful transaction and no exit condition in config',
+      );
+    }
+    return {
+      ...ruleResult,
+      reason: UnsuccessfulTransaction.reason,
+      subRuleRef: UnsuccessfulTransaction.subRuleRef,
+    };
+  }
+  const debtorAccountId = `accounts/${req.DataCache.dbtrAcctId}`;
+  const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
+
+  const queryString = new SqlFieldsQuery(
+    'SELECT TR_FROM FROM pseudonymsschema.transactionrelationship WHERE TR_TO = ? AND TR_TXTP = ? AND TR_TXSTS = ? AND TR_CRE_DT_TM <= ? ORDER BY TR_CRE_DT_TM DESC LIMIT ?;',
+  ).setArgs(
+    debtorAccountId,
+    'pacs.002.001.12',
+    'ACCC',
+    currentPacs002TimeFrame,
+    maxQueryLimit,
+  );
+
+  const cursor = await pseudonymsdb.query(queryString);
+  const newestPacs008 = (await cursor.getAll()) as Array<[string]>;
+
+  if (!newestPacs008.length) {
+    throw new Error('Data error: irretrievable transaction history');
+  }
+
+  if (
+    !newestPacs008 ||
+    newestPacs008.length > (maxQueryLimit || 3) ||
+    newestPacs008.length < 2
+  ) {
+    const InsufficientHistory = ruleConfig.config.exitConditions.find(
+      (b: { reason: string; subRuleRef: string }) => b.subRuleRef === '.x01',
+    );
+
+    if (InsufficientHistory === undefined) {
+      throw new Error('Insufficient History and no exit condition in config');
+    }
+    return {
+      ...ruleResult,
+      reason: InsufficientHistory.reason,
+      subRuleRef: InsufficientHistory.subRuleRef,
+    };
+  }
+
+  const mostRecentCreditorId = newestPacs008[0][0];
+
+  const countOfMatchingCreditors: number = newestPacs008[0].reduce(
+    (accumulator: number, current: string) =>
+      current === mostRecentCreditorId ? accumulator + 1 : accumulator,
+    0,
+  );
+
+  return determineOutcome(countOfMatchingCreditors, ruleConfig, ruleResult);
+};
