@@ -17,16 +17,39 @@ create table account_holder (
 create table transaction_relationship (
     source varchar references account(id),
     destination varchar references account(id),
-    amtUnit bigint not null,
-    amtCcy varchar(3) not null,
-    amtNanos integer not null,
-    creDtTm timestamptz not null,
-    endToEndId varchar not null check (trim(endToEndId) <> ''),
-    msgId varchar not null check (trim(msgId) <> ''),
-    pmtInfId varchar not null check (trim(pmtInfId) <> ''),
-    txTp varchar not null check (trim(txTp) <> ''),
-    lat float8,
-    lon float8,
-    txSts varchar,
+    transaction_relationship jsonb not null,
+
+    endToEndId text generated always as (
+        transaction_relationship->>'EndToEndId'
+    ) stored,
+
+    amt numeric(18,2) generated always as (
+        transaction_relationship->>'Amt'
+    ) stored,
+
+    ccy varchar(3) generated always as (
+        transaction_relationship->>'Ccy'
+    ) stored,
+
+    msgId varchar(3) generated always as (
+        transaction_relationship->>'MsgId'
+    ) stored,
+
+    creDtTm timestamptz generated always as (
+        (transaction_relationship->>'CreDtTm')::timestamptz
+    ) stored,
+
+    txTp varchar generated always as (
+        transaction_relationship->>'TxTp'
+    ) stored,
+
+    txSts varchar generated always as (
+        transaction_relationship->>'TxSts'
+    ) stored,
+
+    pmtInfId varchar generated always as (
+        transaction_relationship->>'PmtInfId'
+    ) stored,
+
     primary key (msgId, endToEndId, txTp, pmtInfId)
 );
