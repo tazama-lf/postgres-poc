@@ -40,7 +40,8 @@ export const handleRule003 = async (
   const endToEndId = req.transaction.FIToFIPmtSts.TxInfAndSts.OrgnlEndToEndId;
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
 
-const pool = await databaseManager._pseudonymsDb?.query(`
+  const pool = await databaseManager._pseudonymsDb?.query(
+    `
     WITH newestSentpacs008 as (
         SELECT MAX(creDtTm::timestamptz) as newestPain FROM transaction_relationship
         WHERE source = $1
@@ -68,11 +69,8 @@ const pool = await databaseManager._pseudonymsDb?.query(`
         (SELECT newestPain FROM newestSentpacs008),
         (SELECT newestSuccessfulPacs FROM newestReceivedpacs008)
     ) AS result;
-  `,[
-    creditorAccountId,
-    endToEndId,
-    new Date(currentPacs002TimeFrame),
-  ]
+  `,
+    [creditorAccountId, endToEndId, new Date(currentPacs002TimeFrame)],
   );
 
   if (!pool.rows.count) {
@@ -84,7 +82,7 @@ const pool = await databaseManager._pseudonymsDb?.query(`
     return { ...ruleResult, subRuleRef: '.x01', reason };
   }
 
-  const results = pool.rows.map((value: {result: string})=> value.result);
+  const results = pool.rows.map((value: { result: string }) => value.result);
 
   const timeStampOldestSuccessfulpacs008Edge = results[0];
 

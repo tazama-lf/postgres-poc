@@ -10,7 +10,7 @@ import { configuration } from '../';
 import determineOutcome from '../helpers/determineOutcome';
 import { getRuleConfig } from '../helpers/getRuleConfig';
 import { handleRule003 } from '../rules/003';
-// import { handleRule008 } from '../rules/008';
+import { handleRule008 } from '../rules/008';
 // import { handleRule010 } from '../rules/010';
 // import { handleRule011 } from '../rules/011';
 // import { handleRule016 } from '../rules/016';
@@ -141,16 +141,16 @@ export const execute = async (reqObj: unknown): Promise<void> => {
           databaseManager,
         );
         break;
-      // case '008':
-      //   ruleRes = await handleRule008(
-      //     request,
-      //     determineOutcome,
-      //     ruleRes,
-      //     loggerService,
-      //     ruleConfig,
-      //     databaseManager,
-      //   );
-      //   break;
+      case '008':
+        ruleRes = await handleRule008(
+          request,
+          determineOutcome,
+          ruleRes,
+          loggerService,
+          ruleConfig,
+          databaseManager,
+        );
+        break;
       // case '010':
       //   ruleRes = await handleRule010(
       //     request,

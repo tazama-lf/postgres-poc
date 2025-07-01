@@ -11,13 +11,6 @@ import {
   type RuleResult,
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
 
-import { pseudonymsdb } from '../client/ignite';
-// @ts-ignore
-
-import IgniteClient from 'apache-ignite-client';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
-
 export const handleRule008 = async (
   req: RuleRequest,
   determineOutcome: (
@@ -61,25 +54,27 @@ export const handleRule008 = async (
       subRuleRef: UnsuccessfulTransaction.subRuleRef,
     };
   }
-  const debtorAccountId = `accounts/${req.DataCache.dbtrAcctId}`;
+  const debtorAccountId = req.DataCache.dbtrAcctId;
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
 
-  const queryString = new SqlFieldsQuery(
-    'SELECT TR_FROM FROM pseudonymsschema.transactionrelationship WHERE TR_TO = ? AND TR_TXTP = ? AND TR_TXSTS = ? AND TR_CRE_DT_TM <= ? ORDER BY TR_CRE_DT_TM DESC LIMIT ?;',
-  ).setArgs(
-    debtorAccountId,
-    'pacs.002.001.12',
-    'ACCC',
-    currentPacs002TimeFrame,
-    maxQueryLimit,
+  const result = await databaseManager._pseudonymsDb.query(
+    'SELECT source FROM transaction_relationship WHERE destination = $1 AND txtp = $2 AND txsts = $3 AND credttm <= $4 ORDER BY credttm::timestamptz DESC LIMIT $5;',
+    [
+      debtorAccountId,
+      'pacs.002.001.12',
+      'ACCC',
+      currentPacs002TimeFrame,
+      maxQueryLimit,
+    ],
   );
 
-  const cursor = await pseudonymsdb.query(queryString);
-  const newestPacs008 = (await cursor.getAll()) as Array<[string]>;
-
-  if (!newestPacs008.length) {
+  if (!result.rows.length) {
     throw new Error('Data error: irretrievable transaction history');
   }
+
+  const newestPacs008 = result.rows.map(
+    (value: { source: string }) => value.source,
+  );
 
   if (
     !newestPacs008 ||
