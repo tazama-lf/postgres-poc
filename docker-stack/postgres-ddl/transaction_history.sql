@@ -1,8 +1,9 @@
 create table pacs002 (
     id uuid primary key,
     document jsonb not null,
-    creDtTm timestamptz generated always as (
-        (document->'FIToFIPmtSts'->'GrpHdr'->>'CreDtTm')::timestamptz
+    -- cast when querying
+    creDtTm text generated always as (
+        document->'FIToFIPmtSts'->'GrpHdr'->>'CreDtTm'
     ) stored,
     
     messageId text generated always as (
@@ -26,8 +27,9 @@ create index idx_pacs002_end_to_end_id on pacs002 (endToEndId);
 create table pacs008 (
     id uuid primary key,
     document jsonb not null,
-    creDtTm timestamptz generated always as (
-        (document->'FIToFICstmrCdtTrf'->'GrpHdr'->>'CreDtTm')::timestamptz
+    -- cast when querying
+    creDtTm text generated always as (
+        document->'FIToFICstmrCdtTrf'->'GrpHdr'->>'CreDtTm'
     ) stored,
 
     messageId text generated always as (
