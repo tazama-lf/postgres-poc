@@ -19,7 +19,7 @@ import { handleRule024 } from '../rules/024';
 import { handleRule026 } from '../rules/026';
 import { handleRule028 } from '../rules/028';
 import { handleRule030 } from '../rules/030';
-// import { handleRule048 } from '../rules/048';
+import { handleRule048 } from '../rules/048';
 // import { handleRule063 } from '../rules/063';
 // import { handleRule084 } from '../rules/084';
 
@@ -231,16 +231,16 @@ export const execute = async (reqObj: unknown): Promise<void> => {
           databaseManager,
         );
         break;
-      // case '048':
-      //   ruleRes = await handleRule048(
-      //     request,
-      //     determineOutcome,
-      //     ruleRes,
-      //     loggerService,
-      //     ruleConfig,
-      //     databaseManager,
-      //   );
-      //   break;
+      case '048':
+        ruleRes = await handleRule048(
+          request,
+          determineOutcome,
+          ruleRes,
+          loggerService,
+          ruleConfig,
+          databaseManager,
+        );
+        break;
       // case '063':
       //   ruleRes = await handleRule063(
       //     request,

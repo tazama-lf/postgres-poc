@@ -10,12 +10,6 @@ import {
   type RuleRequest,
   type RuleResult,
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
-import { pseudonymsdb } from '../client/ignite';
-// @ts-ignore
-
-import IgniteClient from 'apache-ignite-client';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
 
 export async function handleRule048(
   req: RuleRequest,
@@ -69,42 +63,45 @@ export async function handleRule048(
 
   const endToEndId = req.transaction.FIToFIPmtSts.TxInfAndSts.OrgnlEndToEndId;
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
-  const debtorAccount = `accounts/${req.DataCache.dbtrAcctId!}`;
+  const debtorAccount = `${req.DataCache.dbtrAcctId!}`;
 
-  const queryString = new SqlFieldsQuery(`
+  const res = await databaseManager._pseudonymsDb.query(
+    `
     WITH allSuccessfulPacs002 AS (
-      SELECT TR_END_TO_END_ID
-      FROM transactionRelationship
-      WHERE TR_TO = ?
-      AND TR_TxTp = 'pacs.002.001.12'
-      AND TR_TxSts = 'ACCC'
-      AND TR_Cre_Dt_Tm <= ?
+      SELECT endtoendid
+      FROM transaction_relationship
+      WHERE source = $1
+      AND txtp = 'pacs.002.001.12'
+      AND txsts = 'ACCC'
+      AND credttm::timestamptz <= $2::timestamptz
     )
     SELECT 
-      pacs008.TR_END_TO_END_ID,
-      pacs008.TR_Cre_Dt_Tm,
-      pacs008.TR_Amt AS Amount
-    FROM transactionRelationship pacs008
-    WHERE pacs008.TR_TxTp = 'pacs.008.001.10'
-    AND pacs008.TR_End_To_End_Id IN (SELECT TR_End_To_End_Id FROM allSuccessfulPacs002)
-    `).setArgs(debtorAccount, currentPacs002TimeFrame);
+      pacs008.endtoendid,
+      pacs008.credttm,
+      pacs008.amt AS Amount
+    FROM transaction_relationship pacs008
+    WHERE pacs008.txtp = 'pacs.008.001.10'
+    AND pacs008.endtoendid IN (SELECT endtoendid FROM allSuccessfulPacs002)
+    `,
+    [debtorAccount, currentPacs002TimeFrame],
+  );
 
-  const cursor = await pseudonymsdb.query(queryString);
-
-  const successSets = (await cursor.getAll()) as Array<
-    [string, string, number]
-  >;
+  const successSets = res.rows as Array<{
+    endtoendid: string;
+    credttm: string;
+    amt: number;
+  }>;
 
   const e2eIndex =
     successSets &&
     successSets[0] &&
-    successSets.findIndex((i) => i[0] === endToEndId);
+    successSets.findIndex((i) => i.endtoendid === endToEndId);
 
   if (
     typeof e2eIndex !== 'number' ||
     !successSets ||
-    !successSets[0] ||
-    successSets[0].length <= 1 ||
+    !successSets ||
+    successSets.length <= 1 ||
     e2eIndex < 0
   ) {
     if (InsufficientHistory === undefined) {
@@ -127,9 +124,9 @@ export async function handleRule048(
 
   const transactions = [
     {
-      CreDtTm: successSets[0][1],
-      Amount: successSets[0][2],
-      EndToEndId: successSets[0][0],
+      CreDtTm: successSets[0].credttm,
+      Amount: successSets[0].amt,
+      EndToEndId: successSets[0].endtoendid,
     },
   ];
 
