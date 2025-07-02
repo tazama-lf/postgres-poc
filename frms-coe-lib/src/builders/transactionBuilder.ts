@@ -38,10 +38,10 @@ export async function transactionBuilder(manager: DatabaseManagerType, transacti
     await db?.query(
       `
         insert into transaction
-          (source, destination, creDtTm)
+          (uuid, transaction)
         values
-          ($1, $2, $3)
-        on conflict (source, destination) do nothing`,
+          ($1, $2)
+        `,
       [v4(), data],
     );
   };
