@@ -12,11 +12,6 @@ import {
   type RuleResult,
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
 import { unwrap } from '@tazama-lf/frms-coe-lib/lib/helpers/unwrap';
-import { pseudonymsdb } from '../client/ignite';
-// @ts-ignore
-import IgniteClient from 'apache-ignite-client';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
 
 export const amountTracking = (
   tolerance: number,
@@ -98,62 +93,51 @@ export const handleRule024 = async (
   }
 
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
-  const creditorAccountId = `accounts/${req.DataCache.cdtrAcctId}`;
+  const creditorAccountId = `${req.DataCache.cdtrAcctId}`;
   const maxQueryRange: number = ruleConfig.config.parameters
     .maxQueryRange as number;
   const credttm = req.DataCache.creDtTm;
 
-  const queryString = new SqlFieldsQuery(`
+  const results = await databaseManager._pseudonymsDb.query(
+    `
  WITH newestPacs008 AS (
-    SELECT TOP 1 tr_Amt
-    FROM transactionRelationship
-    WHERE tr_from = ?
-    AND tr_TxTp = 'pacs.008.001.10'
-    AND tr_Cre_Dt_Tm < ?
-    ORDER BY tr_Cre_Dt_Tm DESC
+    SELECT credttm::timestamptz
+    FROM transaction_relationship
+    WHERE source = $1
+    AND txtp = 'pacs.008.001.10'
+    AND credttm::timestamptz < $2::timestamptz
+    ORDER BY credttm::timestamptz DESC
+    limit 1
 ),
 allSuccessfulPacs002 AS (
-    SELECT tr_End_To_End_Id
-    FROM transactionRelationship
-    WHERE tr_from = ?
-    AND tr_TxTp = 'pacs.002.001.12'
-    AND tr_TxSts = 'ACCC'
-    AND DATEDIFF(SECOND, tr_Cre_Dt_Tm, (SELECT tr_Cre_Dt_Tm FROM newestPacs008)) <= ?
-    AND DATEDIFF(SECOND, tr_Cre_Dt_Tm, (SELECT tr_Cre_Dt_Tm FROM newestPacs008)) > 0
-    AND tr_Cre_Dt_Tm <= ? 
+    SELECT endtoendid
+    FROM transaction_relationship
+    WHERE source = $1
+    AND txtp = 'pacs.002.001.12'
+    AND txsts = 'ACCC'
+    and (extract(epoch from (select credttm from newestPacs008) - credttm::timestamptz) * 1000) <= $3
+    and (extract(epoch from (select credttm from newestPacs008) - credttm::timestamptz) * 1000) > 0
+    AND credttm::timestamptz <= $4::timestamptz
 ),
 historicalAmounts AS (
-    SELECT tr_Amt
-    FROM transactionRelationship
-    WHERE tr_TxTp = 'pacs.008.001.10'
-    AND tr_End_To_End_Id IN (SELECT tr_End_To_End_Id FROM allSuccessfulPacs002)
-    ORDER BY tr_Cre_Dt_Tm DESC
+    SELECT amt
+    FROM transaction_relationship
+    WHERE txtp = 'pacs.008.001.10'
+    AND endtoendid IN (SELECT endtoendid FROM allSuccessfulPacs002)
+    ORDER BY credttm::timestamptz DESC
 )
 SELECT 
-    (SELECT tr_Amt FROM newestPacs008) AS targetAmount,
-    historicalAmounts.tr_Amt AS historicalAmounts
+    (SELECT amt FROM newestPacs008) AS targetAmount,
+    historicalAmounts.amt AS historicalAmounts
 FROM historicalAmounts;
-`).setArgs(
-    creditorAccountId,
-    credttm,
-    creditorAccountId,
-    maxQueryRange,
-    currentPacs002TimeFrame,
+`,
+    [creditorAccountId, credttm, maxQueryRange, currentPacs002TimeFrame],
   );
 
-  const cursor = await pseudonymsdb.query(queryString);
-
-  const res = await cursor.getAll() as Array<[number, number[]]>;
-
-  const recentSuccessfulTransactionsAndTargetAmount: Array<{
+  const recentSuccessfulTransactionsAndTargetAmount = results.rows as Array<{
     targetAmount: number;
     historicalAmounts: number[];
-  }> = res.map((value) => {
-    return {
-      targetAmount: value[0],
-      historicalAmounts: value[1],
-    };
-  });
+  }>;
 
   const unWrappedResult = unwrap<{
     targetAmount: number;
