@@ -7,10 +7,10 @@ create table typology (
     id serial primary key,
     configuration jsonb not null,
     typologyId text generated always as (
-        configuration->>'typologyId'
+        configuration->>'id'
     ) stored,
     typologyCfg text generated always as (
-        configuration->>'typologyCfg'
+        configuration->>'cfg'
     ) stored,
     unique (typologyId, typologyCfg)
 );
