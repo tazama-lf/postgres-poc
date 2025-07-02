@@ -12,12 +12,6 @@ import {
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
 import { unwrap } from '@tazama-lf/frms-coe-lib/lib/helpers/unwrap';
 
-// @ts-ignore
-import IgniteClient from 'apache-ignite-client';
-import { pseudonymsdb } from '../client/ignite';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
-
 export const handleRule084 = async (
   req: RuleRequest,
   determineOutcome: (
@@ -38,16 +32,16 @@ export const handleRule084 = async (
     throw new Error('DataCache object not retrievable');
   }
 
-  const debtorId = `entities/${req.DataCache.cdtrId}`;
+  const debtorId = `${req.DataCache.cdtrId}`;
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
 
-  const queryString = new SqlFieldsQuery(`
-    select count (*) from pseudonymsschema.accountholder where \`from\` = ? and credttm <= ?;`).setArgs(debtorId, currentPacs002TimeFrame);
+  const results = await databaseManager._pseudonymsDb.query(
+    `
+    select count (*) from account_holder where source = $1 and credttm::timestamptz <= $2::timestamptz`,
+    [debtorId, currentPacs002TimeFrame],
+  );
 
-  const cursor = await pseudonymsdb.query(queryString);
-  const results = (await cursor.getAll()) as Array<[number]>;
-
-  const numberOfAccounts = unwrap<number>(results) ?? 0;
+  const numberOfAccounts = Number(results.rows[0].count);
 
   if (!numberOfAccounts) {
     throw new Error('Data error: irretrievable debtor account information');

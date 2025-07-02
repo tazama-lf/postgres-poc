@@ -21,7 +21,7 @@ import { handleRule028 } from '../rules/028';
 import { handleRule030 } from '../rules/030';
 import { handleRule048 } from '../rules/048';
 import { handleRule063 } from '../rules/063';
-// import { handleRule084 } from '../rules/084';
+import { handleRule084 } from '../rules/084';
 
 const calculateDuration = (startTime: bigint): number => {
   const endTime: bigint = process.hrtime.bigint();
@@ -251,16 +251,16 @@ export const execute = async (reqObj: unknown): Promise<void> => {
           databaseManager,
         );
         break;
-      // case '084':
-      //   ruleRes = await handleRule084(
-      //     request,
-      //     determineOutcome,
-      //     ruleRes,
-      //     loggerService,
-      //     ruleConfig,
-      //     databaseManager,
-      //   );
-      //   break;
+      case '084':
+        ruleRes = await handleRule084(
+          request,
+          determineOutcome,
+          ruleRes,
+          loggerService,
+          ruleConfig,
+          databaseManager,
+        );
+        break;
       default:
         loggerService.log(`cannot map rule res id ${ruleRes.id}`);
     }
