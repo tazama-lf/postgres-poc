@@ -70,20 +70,20 @@ const evaluateTypologySendRequest = async (
     const startTime = process.hrtime.bigint();
     const spanExecReq = apm.startSpan(`${typologyResults[index].cfg}.exec.Req`);
 
-    const expressionRes = (await databaseManager.getTypologyConfig({
+    const expressionRes = await databaseManager.getTypologyConfig({
       id: typologyResults[index].id,
       cfg: typologyResults[index].cfg,
       host: '',
       desc: '',
       rules: [],
-    })) as unknown[][];
+    });
 
-    if (!expressionRes?.[0]?.[0]) {
+    if (!expressionRes) {
       loggerService.warn(`No Typology Expression found for Typology ${typologyResults[index].cfg},`, logContext, msgId);
       continue;
     }
 
-    const expression = expressionRes[0][0] as ITypologyExpression;
+    const expression = expressionRes as ITypologyExpression;
     const typologyResultValue = evaluateTypologyExpression(expression.rules, typologyResults[index].ruleResults, expression.expression);
 
     typologyResults[index].result = typologyResultValue;
