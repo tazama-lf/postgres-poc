@@ -16,12 +16,12 @@ import { handleRule011 } from '../rules/011';
 import { handleRule016 } from '../rules/016';
 import { handleRule021 } from '../rules/021';
 import { handleRule024 } from '../rules/024';
-// import { handleRule030 } from '../rules/030';
+//import { handleRule030 } from '../rules/030';
 // import { handleRule048 } from '../rules/048';
 // import { handleRule063 } from '../rules/063';
 // import { handleRule084 } from '../rules/084';
 // import { handleRule028 } from '../rules/028';
-// import { handleRule026 } from '../rules/026';
+import { handleRule026 } from '../rules/026';
 
 const calculateDuration = (startTime: bigint): number => {
   const endTime: bigint = process.hrtime.bigint();
@@ -201,16 +201,16 @@ export const execute = async (reqObj: unknown): Promise<void> => {
           databaseManager,
         );
         break;
-      // case '026':
-      //   ruleRes = await handleRule026(
-      //     request,
-      //     determineOutcome,
-      //     ruleRes,
-      //     loggerService,
-      //     ruleConfig,
-      //     databaseManager,
-      //   );
-      //   break;
+      case '026':
+        ruleRes = await handleRule026(
+          request,
+          determineOutcome,
+          ruleRes,
+          loggerService,
+          ruleConfig,
+          databaseManager,
+        );
+        break;
       // case '028':
       //   ruleRes = await handleRule028(
       //     request,
