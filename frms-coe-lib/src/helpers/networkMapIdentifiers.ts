@@ -30,8 +30,7 @@ export const getIdsFromNetworkMap = async (
   databaseManager: DatabaseManagerInstance<ManagerConfig>,
 ): Promise<{ rulesIds: string[]; typologyCfg: string[] }> => {
   const networkConfigurationList = await databaseManager.getNetworkMap();
-  const unwrappedNetworkMap = unwrap<NetworkMap>(networkConfigurationList as NetworkMap[][]);
-  const networkMap = getRuleMap(unwrappedNetworkMap);
+  const networkMap = getRuleMap(networkConfigurationList);
   return {
     rulesIds: networkMap.rulesIds,
     typologyCfg: networkMap.typologyCfg,
