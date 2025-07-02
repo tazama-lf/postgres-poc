@@ -10,11 +10,6 @@ import {
   type RuleRequest,
   type RuleResult,
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
-import { transactionHistoryDB } from '../client/ignite';
-// @ts-ignore
-import IgniteClient from 'apache-ignite-client';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
 
 export async function handleRule028(
   req: RuleRequest,
@@ -35,12 +30,14 @@ export async function handleRule028(
 
   const endToEndId = req.transaction.FIToFIPmtSts.TxInfAndSts.OrgnlEndToEndId;
 
-  const queryString = new SqlFieldsQuery(`
-    select dbtr_birthdt from pacs008schema.pacs008
-      where endtoendid = ? ;`).setArgs(endToEndId);
+  const res = await databaseManager._transactionHistory.query(
+    `
+    select document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'Dbtr'->'Id'->'PrvtId'->'DtAndPlcOfBirth'->'BirthDt' as birthdate from pacs008
+      where endtoendid = $1`,
+    [endToEndId],
+  );
 
-  const cursor = await transactionHistoryDB.query(queryString);
-  const dateOfBirthRes = (await cursor.getAll()) as Array<[string]>;
+  const dateOfBirthRes = [res.rows[0]['birthdate']] as Array<[string]>;
 
   // Validates only for YYYY-MM-DD format
   // const validDateRegex = /^\d{4}-\d{2}-\d{2}$/;
