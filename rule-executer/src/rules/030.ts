@@ -11,11 +11,6 @@ import {
   type RuleResult,
   type OutcomeResult,
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
-import { pseudonymsdb } from '../client/ignite';
-// @ts-ignore
-import IgniteClient from 'apache-ignite-client';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
 
 export const handleRule030 = async (
   req: RuleRequest,
@@ -59,27 +54,28 @@ export const handleRule030 = async (
 
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
 
-  const creditorAccountId = `accounts/${req.DataCache.cdtrAcctId}`;
+  const creditorAccountId = `${req.DataCache.cdtrAcctId}`;
 
-  const debtorAccountId = `accounts/${req.DataCache.dbtrAcctId}`;
+  const debtorAccountId = `${req.DataCache.dbtrAcctId}`;
 
-  const queryString = new SqlFieldsQuery(`
-  select count (*) from pseudonymsschema.transactionrelationship
-    where TR_FROM = ? 
-      and TR_TO = ? 
-      and TR_TXTP = ?
-      and TR_TXSTS = ?
-      and TR_CRE_DT_TM <= ?;`).setArgs(
-    creditorAccountId,
-    debtorAccountId,
-    'pacs.002.001.12',
-    'ACCC',
-    currentPacs002TimeFrame,
+  const res = await databaseManager._pseudonymsDb.query(
+    `
+  select count (*) from transaction_relationship
+    where source = $1 
+      and destination = $2
+      and txtp = $3
+      and txsts = $4
+      and credttm::timestamptz <= $5::timestamptz;`,
+    [
+      creditorAccountId,
+      debtorAccountId,
+      'pacs.002.001.12',
+      'ACCC',
+      currentPacs002TimeFrame,
+    ],
   );
 
-  const cursor = await pseudonymsdb.query(queryString);
-  const results = (await cursor.getAll()) as Array<[number]>;
-  const numberOfSuccessfulTransactions = results[0][0];
+  const numberOfSuccessfulTransactions = Number(res.rows[0].count);
 
   // const numberOfSuccessfulTransactionsData: number[][] = await (await databaseManager._pseudonymsDb.query(queryString)).batches.all();
 
