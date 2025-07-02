@@ -11,12 +11,6 @@ import {
   type RuleRequest,
   type RuleResult,
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
-import { pseudonymsdb } from '../client/ignite';
-// @ts-ignore
-
-import IgniteClient from 'apache-ignite-client';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
 
 export const calculateBenfordsLaw = (historicAmounts: number[]): number => {
   let chiSquare = 0;
@@ -93,37 +87,35 @@ export const handleRule063 = async (
     throw new Error('DataCache object not retrievable');
   }
 
-  const creditorAccountId = `accounts/${req.DataCache.cdtrAcctId}`;
+  const creditorAccountId = `${req.DataCache.cdtrAcctId}`;
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
 
-  const queryString = new SqlFieldsQuery(`
+  const res = await databaseManager._pseudonymsDb.query(
+    `
     WITH allSuccessfulPacs002 AS (
-      SELECT TR_END_TO_END_ID
-      FROM transactionRelationship
-      WHERE TR_from = ? 
-      AND TR_TxTp = 'pacs.002.001.12'
-      AND TR_TxSts = 'ACCC'
-      AND TR_Cre_Dt_Tm <= ?
+      SELECT endtoendid
+      FROM transaction_relationship
+      WHERE source = $1
+      AND txtp = 'pacs.002.001.12'
+      AND txsts = 'ACCC'
+      AND credttm::timestamptz <= $2::timestamptz
   )
     SELECT 
-        CAST(pacs008.TR_Amt AS DECIMAL) AS Amt  -- Convert Amt to a number
-    FROM transactionRelationship pacs008
-    WHERE pacs008.TR_TxTp = 'pacs.008.001.10'
-    AND pacs008.TR_End_To_End_Id IN (SELECT TR_End_To_End_Id FROM allSuccessfulPacs002)
-    `).setArgs(creditorAccountId, currentPacs002TimeFrame);
+        CAST(pacs008.amt AS DECIMAL) AS Amt  -- Convert Amt to a number
+    FROM transaction_relationship pacs008
+    WHERE pacs008.txtp = 'pacs.008.001.10'
+    AND pacs008.endtoendid IN (SELECT endtoendid FROM allSuccessfulPacs002)
+    `,
+    [creditorAccountId, currentPacs002TimeFrame],
+  );
 
-  const cursor = await pseudonymsdb.query(queryString);
-  const historicalAmountsData = (await cursor.getAll()) as Array<[number]>;
+  const historicalAmounts = res.rows.map((value: { amt: string | number }) =>
+    Number(value.amt),
+  );
 
-
-  if (
-    !Array.isArray(historicalAmountsData) ||
-    !Array.isArray(historicalAmountsData[0])
-  ) {
+  if (!Array.isArray(historicalAmounts)) {
     throw new Error('Data error: irretrievable transaction history');
   }
-
-  const historicalAmounts: number[] = historicalAmountsData[0];
 
   if (
     historicalAmounts.length <
