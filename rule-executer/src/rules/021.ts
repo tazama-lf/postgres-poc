@@ -10,11 +10,6 @@ import {
   type RuleRequest,
   type RuleResult,
 } from '@tazama-lf/frms-coe-lib/lib/interfaces';
-import { pseudonymsdb } from '../client/ignite';
-// @ts-ignore
-import IgniteClient from 'apache-ignite-client';
-
-const SqlFieldsQuery = IgniteClient.SqlFieldsQuery;
 
 export async function handleRule021(
   req: RuleRequest,
@@ -67,11 +62,10 @@ export async function handleRule021(
   }
 
   const currentPacs002TimeFrame = req.transaction.FIToFIPmtSts.GrpHdr.CreDtTm;
-  const creditorAccount = `accounts/${req.DataCache.cdtrAcctId!}`;
+  const creditorAccount = `${req.DataCache.cdtrAcctId!}`;
 
   const maxQueryRange: number | undefined = ruleConfig.config.parameters
     ?.maxQueryRange as number;
-
 
   // const getAmtNewestPacs008 = aql`LET allSuccessfulPacs002 = (
   //     FOR pacs002 IN transactionRelationship
@@ -89,50 +83,49 @@ export async function handleRule021(
   //     SORT newestPacs008.CreDtTm DESC
   // RETURN newestPacs008.Amt`;
 
-  const queryString = new SqlFieldsQuery(`
+  const results = await databaseManager._pseudonymsDb.query(
+    `
     WITH allSuccessfulPacs002 AS (
-      SELECT TR_END_TO_END_ID
-      FROM pseudonymsschema.transactionrelationship
-      WHERE TR_FROM = ?
-        AND TR_TXTP = ?
-        AND TR_TXSTS = ?
-        AND TR_CRE_DT_TM <= ?
-        AND TIMESTAMPDIFF(SECOND, TR_CRE_DT_TM, ?) <= ?
+      SELECT endtoendid
+      FROM transaction_relationship
+      WHERE source = $1
+        AND txtp = $2
+        AND txsts = $3
+        and (extract(epoch from $4::timestamptz - credttm::timestamptz) * 1000) <= $5
+        AND credttm::timestamptz <= $4::timestamptz
     )
-    SELECT TR_AMT
-    FROM pseudonymsschema.transactionrelationship
-    WHERE TR_TxTp = ?
-      AND TR_END_TO_END_ID IN (SELECT TR_END_TO_END_ID FROM allSuccessfulPacs002)
-    ORDER BY TR_CRE_DT_TM DESC;
-`).setArgs(
-    creditorAccount,
-    'pacs.002.001.12',
-    'ACCC',
-    currentPacs002TimeFrame,
-    currentPacs002TimeFrame,
-    maxQueryRange,
-    'pacs.008.001.10',
+    SELECT amt
+    FROM transaction_relationship
+    WHERE txtp = $6
+      AND endtoendid IN (SELECT endtoendid FROM allSuccessfulPacs002)
+    ORDER BY credttm::timestamptz DESC;
+`,
+    [
+      creditorAccount,
+      'pacs.002.001.12',
+      'ACCC',
+      currentPacs002TimeFrame,
+      maxQueryRange,
+      'pacs.008.001.10',
+    ],
   );
 
-  const cursor = await pseudonymsdb.query(queryString);
-  const pacs008Amt = (await cursor.getAll()) as Array<[number]>;
+  const pacs008Amt: number[] =
+    results.rows?.map((value: { amt: number | string }) => Number(value.amt)) ??
+    [];
 
-  // const pacs008Amt = await (
-  //   await databaseManager._pseudonymsDb.query(getAmtNewestPacs008)
-  // ).batches.all();
-
-  if (!pacs008Amt || !pacs008Amt[0] || pacs008Amt[0].length <= 0) {
+  if (!pacs008Amt || !pacs008Amt[0] || pacs008Amt.length <= 0) {
     throw new Error('Data error: irretrievable transaction history');
   }
 
   /* eslint-disable-next-line @typescript-eslint/no-unsafe-argument */
-  if (!isNumbersArray(pacs008Amt[0])) {
+  if (!isNumbersArray(pacs008Amt)) {
     throw new Error(
       'Data error: query result type mismatch - expected [numbers]',
     );
   }
 
-  if (pacs008Amt[0].length <= 1) {
+  if (pacs008Amt.length <= 1) {
     if (InsufficientHistory === undefined) {
       throw new Error('Insufficient History and no exit condition in config');
     }
@@ -146,7 +139,7 @@ export async function handleRule021(
   }
   const toleranceValue = ruleConfig.config.parameters.tolerance as number;
   // Calculate if matching numbers is within tolerance of first (latest) value
-  const amounts = pacs008Amt[0] as number[];
+  const amounts = pacs008Amt;
   const tolerance = amounts[0] * toleranceValue;
   const countOfMatchingAmounts = amounts.reduce((n, val) => {
     if (Math.abs(val - amounts[0]) <= tolerance) {
