@@ -3,7 +3,6 @@
 import { type DBConfig, type DatabaseManagerType } from '../services/dbManager';
 import type { DataCache, NetworkMap } from '../interfaces';
 import { Pool } from 'pg';
-import { v4 } from 'uuid';
 
 export async function transactionBuilder(manager: DatabaseManagerType, transactionConfig: DBConfig, redis: boolean): Promise<void> {
   manager._transaction = new Pool({
@@ -38,11 +37,11 @@ export async function transactionBuilder(manager: DatabaseManagerType, transacti
     await db?.query(
       `
         insert into transaction
-          (uuid, transaction)
+          (transaction)
         values
-          ($1, $2)
+          ($1)
         `,
-      [v4(), data],
+      [data],
     );
   };
 }
