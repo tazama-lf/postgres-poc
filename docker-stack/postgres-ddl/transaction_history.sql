@@ -1,5 +1,4 @@
 create table pacs002 (
-    id uuid primary key,
     document jsonb not null,
     -- cast when querying
     creDtTm text generated always as (
@@ -14,7 +13,8 @@ create table pacs002 (
         document->'FIToFIPmtSts'->'TxInfAndSts'->>'OrgnlEndToEndId'
     ) stored,
 
-    constraint unique_msgid_e2eid_pacs002 unique (messageId, endToEndId),
+    constraint unique_e2eid_pacs002 unique (endToEndId),
+    constraint unique_msgid_pacs002 unique (messageId),
 
     constraint message_id_not_null check (messageId is not null),
     constraint cre_dt_tm check (creDtTm is not null),
@@ -25,7 +25,6 @@ create index idx_pacs002_msg_id on pacs002 (messageId);
 create index idx_pacs002_end_to_end_id on pacs002 (endToEndId);
 
 create table pacs008 (
-    id uuid primary key,
     document jsonb not null,
     -- cast when querying
     creDtTm text generated always as (
@@ -40,11 +39,25 @@ create table pacs008 (
         document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'PmtId'->>'EndToEndId'
     ) stored,
 
+    debtorAccountId text generated always as (
+        document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'DbtrAcct'->'Id'->'Othr'->>'Id'
+    ) stored,
+
+    creditorAccountId text generated always as (
+        document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'CdtrAcct'->'Id'->'Othr'->>'Id'
+    ) stored,
+
     constraint unique_msgid_e2eid_pacs008 unique (messageId, endToEndId),
+    constraint unique_e2eid_pacs008 unique (endToEndId),
     constraint message_id_not_null check (messageId is not null),
     constraint cre_dt_tm check (creDtTm is not null),
+    constraint dbtr_acct_id_not_null check (debtorAccountId is not null),
+    constraint cdtr_acct_id_not_null check (creditorAccountId is not null),
     constraint end_to_end_id_not_null check (endToEndId is not null)
 );
 
 create index idx_pacs008_msg_id on pacs008 (messageId);
 create index idx_pacs008_end_to_end_id on pacs008 (endToEndId);
+create index idx_pacs008_dbtr_acct_id on pacs008 (debtorAccountId);
+create index idx_pacs008_cdtr_acct_id on pacs008 (creditorAccountId);
+create index idx_pacs008_credttm on pacs008 (creDtTm);
