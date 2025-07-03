@@ -54,3 +54,6 @@ create table transaction_relationship (
 
     primary key (msgId, endToEndId, txTp, pmtInfId)
 );
+
+create index idx_tr_e2d_txtp on transaction_relationship (endToEndId, txTp);
+create index idx_tr_cre_dt_tm on transaction_relationship (creDtTm);
