@@ -3,7 +3,6 @@
 import { AccountType, type Pacs002, type Pacs008 } from '../interfaces';
 import { type DatabaseManagerType, type DBConfig } from '../services/dbManager';
 import { Pool } from 'pg';
-import { v4 } from 'uuid';
 
 export async function transactionHistoryBuilder(
   manager: DatabaseManagerType,
@@ -68,19 +67,16 @@ export async function transactionHistoryBuilder(
     const db = manager._transactionHistory;
 
     const isCreditor = accountType === AccountType.CreditorAcct;
-    const accountPath = isCreditor ? 'CdtrAcct' : 'DbtrAcct';
 
     const query = `
       select
         endToEndId as e2eId,
         creDtTm as timestamp
       from
-        pacs008,
-        jsonb_array_elements(
-          data->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'${accountPath}'->'Id'->'Othr'
-        ) as othr
+        pacs008
       where
-        othr->>'Id' = $1;
+          where
+            ${isCreditor ? 'creditor' : 'debtor'}AccountId = $1;
     `;
 
     const result = await db?.query(query, [accountId]);
@@ -91,19 +87,15 @@ export async function transactionHistoryBuilder(
     const db = manager._transactionHistory;
 
     const isCreditor = accountType === AccountType.CreditorAcct;
-    const accountPath = isCreditor ? 'CdtrAcct' : 'DbtrAcct';
 
     const query = `
-      select
-        document
-      from
-        pacs008,
-        jsonb_array_elements(
-          document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'${accountPath}'->'Id'->'Othr'
-        ) AS othr
-      where
-        othr->>'id' = $1;
-    `;
+          select
+            document
+          from
+            pacs008
+          where
+            ${isCreditor ? 'creditor' : 'debtor'}AccountId = $1;
+        `;
 
     const result = await db?.query(query, [accountId]);
     return result?.rows.map((row) => row.document);
@@ -115,10 +107,10 @@ export async function transactionHistoryBuilder(
     await db?.query(
       `
         insert into pacs008
-          (id, document)
+          (document)
         values
-          ($1, $2)`,
-      [v4(), tran],
+          ($1)`,
+      [tran],
     );
   };
 
@@ -127,10 +119,10 @@ export async function transactionHistoryBuilder(
     await db?.query(
       `
         insert into pacs002
-          (id, document)
+          (document)
         values
-          ($1, $2)`,
-      [v4(), tran],
+          ($1)`,
+      [tran],
     );
   };
 }
