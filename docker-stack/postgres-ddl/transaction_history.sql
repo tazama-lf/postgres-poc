@@ -40,11 +40,11 @@ create table pacs008 (
     ) stored,
 
     debtorAccountId text generated always as (
-        document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'DbtrAcct'->'Id'->'Othr'->>'Id'
+        document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'DbtrAcct'->'Id'->'Othr'->0->>'Id'
     ) stored,
 
     creditorAccountId text generated always as (
-        document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'CdtrAcct'->'Id'->'Othr'->>'Id'
+        document->'FIToFICstmrCdtTrf'->'CdtTrfTxInf'->'CdtrAcct'->'Id'->'Othr'->0->>'Id'
     ) stored,
 
     constraint unique_msgid_e2eid_pacs008 unique (messageId, endToEndId),
