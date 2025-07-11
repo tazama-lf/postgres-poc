@@ -1,0 +1,55 @@
+services:
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml/:/etc/prometheus/prometheus.yml
+      - prometheus:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+    networks:
+      - tazama
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - grafana:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    restart: unless-stopped
+    networks:
+      - tazama
+
+  postgresql-exporter:
+    image: prometheuscommunity/postgres-exporter
+    container_name: postgresql-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgres://postgres:password@tazama-db:5432/pseudonyms?sslmode=disable"
+    depends_on:
+      prometheus:
+        condition: service_started
+      tazama-db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - tazama
+
+volumes:
+  prometheus:
+  grafana:
+  postgresql-exporter:
+
+networks:
+    tazama:
