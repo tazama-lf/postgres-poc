@@ -57,3 +57,12 @@ create table transaction_relationship (
 
 create index idx_tr_e2d_txtp on transaction_relationship (endToEndId, txTp);
 create index idx_tr_cre_dt_tm on transaction_relationship (creDtTm);
+create index idx_tr_source_txtp_credttm ON transaction_relationship (source, txtp, credttm);
+create index idx_tr_txsts on transaction_relationship (txsts);
+create index idx_tr_endtoendid on transaction_relationship (endtoendid);
+create index idx_tr_pacs002_accc on transaction_relationship (endtoendid, credttm)
+    where txtp = 'pacs.002.001.12' and txsts = 'ACCC';
+
+create index idx_tr_dest_txtp_txsts_credttm
+    on transaction_relationship (destination, txtp, txsts, credttm desc)
+    include (source);
