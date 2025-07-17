@@ -42,6 +42,7 @@
   - [Setting up](#setting-up)
   - [Challenges](#challenges)
   - [Groundwork](#groundwork)
+  - [Performance](#performance)
   - [Citus Interop](#citus-interop)
 
 # Scope 
@@ -347,6 +348,9 @@ The second challenge is how primary and foreign keys are applied to Timescale. T
 ## Groundwork
 If Timescale is selected as the database of choice, some groundwork needs to be done in order to map out the tables which will benefit the most from it.
 In the pseudonyms database, there is also the `entity` table which is used as an example of triggering the index error. It has a `creDtTm` timestamp column. To mark this column as a hypertable, the primary key on `id` must be removed (as one example). This means that queries that insert to it which leverage "on conflict (id) do nothing" will also break and have to be revisited as `id` no longer has a unique constraint. Some application logic may be added to work around this
+
+## Performance
+The same test (20 virtual users over 5 minutes) was conducted on the same hardware on local. Timescale yielded comparable results to the standard PostgreSQL test (~4300)
 
 ## Citus Interop
 
