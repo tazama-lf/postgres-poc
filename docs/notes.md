@@ -38,6 +38,11 @@
 - [Horizontally scaling the databases with Citus](#horizontally-scaling-the-databases-with-citus)
   - [Caveats](#caveats)
 - [Monitoring](#monitoring)
+- [TimescaleDB](#timescaledb)
+  - [Setting up](#setting-up)
+  - [Challenges](#challenges)
+  - [Groundwork](#groundwork)
+  - [Citus Interop](#citus-interop)
 
 # Scope 
 
@@ -321,3 +326,28 @@ Note: remember to update your `DATABASE_URL` to point to the citus coordinator f
 # Monitoring 
 
 PostgreSQL has a Prometheus exporter available for the community. Dashboard utilising this are also available for Grafana featuring visualisation for metrics and alerts for slow queries, maximum number of connections reached, high number of connections and queries per second 
+
+For the ELK stack integration, Tazama leverages auto instrumentation for calls to ArangoDb. This allows us to be able to view APM spans for the Arango queries to see how they perform without needing to manually instrument each call. The pg driver has similar functionality for ELK which will allow database queries to each have spans visible from Kibana. 
+
+# TimescaleDB
+
+As an additional exercise, Timescale was used as the underlying database.  
+
+## Setting up 
+
+A single instance Timescale was used – hosting multiple databases. 
+
+## Challenges 
+
+Timescale functions around hypertables – virtual tables made from real PostgreSQL tables. These hypertables are partitioned across time. For Tazama, the `CreDtTm` field was used for partitioning. The first challenge encountered was that `CreDtTm` was a generated field (with a text type) - it is not possible to mutate (cast) a generated field - a PostgreSQL limitation. As a workaround, the `CreDtTm` column is no longer marked as generated, but explicitly inserted into the tables. 
+
+The second challenge is how primary and foreign keys are applied to Timescale. The account_holder table in the pseudonyms database could not be marked as a hypertable (through the credttm column) as that table has an `id` as a primary key. Trying to create a hypertable from it would result in the error: 
+> “cannot create a unique index without the column "credttm" (used in partitioning)” 
+
+## Groundwork
+If Timescale is selected as the database of choice, some groundwork needs to be done in order to map out the tables which will benefit the most from it.
+In the pseudonyms database, there is also the `entity` table which is used as an example of triggering the index error. It has a `creDtTm` timestamp column. To mark this column as a hypertable, the primary key on `id` must be removed (as one example). This means that queries that insert to it which leverage "on conflict (id) do nothing" will also break and have to be revisited as `id` no longer has a unique constraint. Some application logic may be added to work around this
+
+## Citus Interop
+
+As of writing, Timescale and Citus function independently. So, one cannot have a Timescale hypertable that is horizontally scaled by Citus: https://github.com/timescale/timescaledb/issues/87 
